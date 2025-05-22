@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package gateway;
 
-option go_package = "github.com/gadididi/nvmeof-csi/proto/gateway;gateway";
+option go_package = "nvmeof-csi/proto/gateway;gateway";
 
 service Gateway {
   // Namespace operations

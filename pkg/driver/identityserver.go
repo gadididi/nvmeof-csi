@@ -14,14 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package spdk
+package driver
 
 import (
 	"context"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 
-	csicommon "github.com/gadididi/nvmeof-csi/pkg/csi-common"
+	csicommon "nvmeof-csi/pkg/csi-common"
 )
 
 type identityServer struct {

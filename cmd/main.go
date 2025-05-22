@@ -22,12 +22,12 @@ import (
 
 	"k8s.io/klog"
 
-	"github.com/gadididi/nvmeof-csi/pkg/spdk"
-	"github.com/gadididi/nvmeof-csi/pkg/util"
+	"nvmeof-csi/pkg/driver"
+	"nvmeof-csi/pkg/util"
 )
 
 const (
-	driverName    = "csi.spdk.io"
+	driverName    = "csi.nvmeof.io"
 	driverVersion = "0.1.0"
 )
 
@@ -37,7 +37,7 @@ var conf = util.Config{
 
 func init() {
 	flag.StringVar(&conf.DriverName, "drivername", driverName, "Name of the driver")
-	flag.StringVar(&conf.Endpoint, "endpoint", "unix://tmp/spdkcsi.sock", "CSI endpoint")
+	flag.StringVar(&conf.Endpoint, "endpoint", "unix://tmp/nvmeofcsi.sock", "CSI endpoint")
 	flag.StringVar(&conf.NodeID, "nodeid", "", "node id")
 	flag.BoolVar(&conf.IsControllerServer, "controller", false, "Start controller server")
 	flag.BoolVar(&conf.IsNodeServer, "node", false, "Start node server")
@@ -50,9 +50,9 @@ func init() {
 }
 
 func main() {
-	klog.Infof("Starting SPDK-CSI driver: %v version: %v", conf.DriverName, driverVersion)
+	klog.Infof("Starting NvmeOF-CSI driver: %v version: %v", conf.DriverName, driverVersion)
 
-	spdk.Run(&conf)
+	driver.Run(&conf)
 
 	os.Exit(0)
 }

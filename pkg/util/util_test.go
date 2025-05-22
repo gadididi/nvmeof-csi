@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/gadididi/nvmeof-csi/pkg/util"
+	"nvmeof-csi/pkg/util"
 )
 
 func TestTryLockSequential(t *testing.T) {

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package spdk
+package driver
 
 import (
 	"context"
@@ -33,8 +33,8 @@ import (
 	"k8s.io/utils/exec"
 	"k8s.io/utils/mount"
 
-	csicommon "github.com/gadididi/nvmeof-csi/pkg/csi-common"
-	"github.com/gadididi/nvmeof-csi/pkg/util"
+	csicommon "nvmeof-csi/pkg/csi-common"
+	"nvmeof-csi/pkg/util"
 )
 
 type nodeServer struct {

@@ -1,4 +1,4 @@
-module github.com/gadididi/nvmeof-csi
+module nvmeof-csi
 
 go 1.24.3
 

@@ -855,7 +855,7 @@ const file_gateway_proto_rawDesc = "" +
 	"\rnamespace_add\x12\x1a.gateway.namespace_add_req\x1a\x14.gateway.nsid_status\"\x00\x12H\n" +
 	"\x10namespace_resize\x12\x1d.gateway.namespace_resize_req\x1a\x13.gateway.req_status\"\x00\x12H\n" +
 	"\x10namespace_delete\x12\x1d.gateway.namespace_delete_req\x1a\x13.gateway.req_status\"\x00\x12K\n" +
-	"\x0flist_namespaces\x12\x1c.gateway.list_namespaces_req\x1a\x18.gateway.namespaces_info\"\x00B6Z4github.com/gadididi/nvmeof-csi/proto/gateway;gatewayb\x06proto3"
+	"\x0flist_namespaces\x12\x1c.gateway.list_namespaces_req\x1a\x18.gateway.namespaces_info\"\x00B\"Z nvmeof-csi/proto/gateway;gatewayb\x06proto3"
 
 var (
 	file_gateway_proto_rawDescOnce sync.Once
