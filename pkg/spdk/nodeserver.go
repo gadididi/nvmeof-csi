@@ -33,12 +33,13 @@ import (
 	"k8s.io/utils/exec"
 	"k8s.io/utils/mount"
 
-	csicommon "github.com/spdk/spdk-csi/pkg/csi-common"
-	"github.com/spdk/spdk-csi/pkg/util"
+	csicommon "github.com/gadididi/nvmeof-csi/pkg/csi-common"
+	"github.com/gadididi/nvmeof-csi/pkg/util"
 )
 
 type nodeServer struct {
-	*csicommon.DefaultNodeServer
+	csi.UnimplementedNodeServer
+	defaultImpl   *csicommon.DefaultNodeServer
 	mounter       mount.Interface
 	volumeLocks   *util.VolumeLocks
 	xpuConnClient *grpc.ClientConn
@@ -80,9 +81,9 @@ func connectXpuNode(xpuList []*util.XpuConfig) (*grpc.ClientConn, *util.XpuConfi
 
 func newNodeServer(d *csicommon.CSIDriver) (*nodeServer, error) {
 	ns := &nodeServer{
-		DefaultNodeServer: csicommon.NewDefaultNodeServer(d),
-		mounter:           mount.New(""),
-		volumeLocks:       util.NewVolumeLocks(),
+		defaultImpl: csicommon.NewDefaultNodeServer(d),
+		mounter:     mount.New(""),
+		volumeLocks: util.NewVolumeLocks(),
 	}
 
 	// get xPU nodes' configs, see deploy/kubernetes/nodeserver-config-map.yaml

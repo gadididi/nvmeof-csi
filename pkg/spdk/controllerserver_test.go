@@ -11,8 +11,8 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 
-	csicommon "github.com/spdk/spdk-csi/pkg/csi-common"
-	"github.com/spdk/spdk-csi/pkg/util"
+	csicommon "github.com/gadididi/nvmeof-csi/pkg/csi-common"
+	"github.com/gadididi/nvmeof-csi/pkg/util"
 )
 
 func TestNvmeofVolume(t *testing.T) {

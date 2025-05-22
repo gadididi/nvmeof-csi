@@ -21,16 +21,17 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 
-	csicommon "github.com/spdk/spdk-csi/pkg/csi-common"
+	csicommon "github.com/gadididi/nvmeof-csi/pkg/csi-common"
 )
 
 type identityServer struct {
-	*csicommon.DefaultIdentityServer
+	csi.UnimplementedIdentityServer
+	defaultImpl *csicommon.DefaultIdentityServer
 }
 
 func newIdentityServer(d *csicommon.CSIDriver) *identityServer {
 	return &identityServer{
-		DefaultIdentityServer: csicommon.NewDefaultIdentityServer(d),
+		defaultImpl: csicommon.NewDefaultIdentityServer(d),
 	}
 }
 

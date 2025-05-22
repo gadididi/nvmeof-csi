@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package gateway;
+
+option go_package = "github.com/gadididi/nvmeof-csi/proto/gateway;gateway";
+
+service Gateway {
+  // Namespace operations
+  rpc namespace_add(namespace_add_req) returns (nsid_status) {}
+  rpc namespace_resize(namespace_resize_req) returns (req_status) {}
+  rpc namespace_delete(namespace_delete_req) returns (req_status) {}
+  rpc list_namespaces(list_namespaces_req) returns (namespaces_info) {}
+}
+
+// ENUMS
+enum AddressFamily {
+  ipv4 = 0;
+  ipv6 = 1;
+}
+
+// REQUEST MESSAGES
+message namespace_add_req {
+  string rbd_pool_name = 1;
+  string rbd_image_name = 2;
+  string subsystem_nqn = 3;
+  optional uint32 nsid = 4;
+  uint32 block_size = 5;
+  optional string uuid = 6;
+  optional int32 anagrpid = 7;
+  optional bool create_image = 8;
+  optional uint64 size = 9;
+  optional bool force = 10;
+  optional bool no_auto_visible = 11;
+  optional bool trash_image = 12;
+  optional bool disable_auto_resize = 13;
+}
+
+message namespace_resize_req {
+  string subsystem_nqn = 1;
+  uint32 nsid = 2;
+  optional string OBSOLETE_uuid = 3;
+  uint64 new_size = 4;
+}
+
+message namespace_delete_req {
+  string subsystem_nqn = 1;
+  uint32 nsid = 2;
+  optional string OBSOLETE_uuid = 3;
+  optional bool i_am_sure = 4;
+}
+
+message list_namespaces_req {
+  string subsystem = 1;
+  optional uint32 nsid = 2;
+  optional string uuid = 3;
+}
+
+// RESPONSE MESSAGES
+message req_status {
+  int32 status = 1;
+  string error_message = 2;
+}
+
+message nsid_status {
+  int32 status = 1;
+  string error_message = 2;
+  uint32 nsid = 3;
+}
+
+message namespace_cli {
+  uint32 nsid = 1;
+  string bdev_name = 2;
+  string rbd_image_name = 3;
+  string rbd_pool_name = 4;
+  uint32 load_balancing_group = 5;
+  uint32 block_size = 6;
+  uint64 rbd_image_size = 7;
+  string uuid = 8;
+  uint64 rw_ios_per_second = 9;
+  uint64 rw_mbytes_per_second = 10;
+  uint64 r_mbytes_per_second = 11;
+  uint64 w_mbytes_per_second = 12;
+  bool auto_visible = 13;
+  repeated string hosts = 14;
+  optional string ns_subsystem_nqn = 15;
+  optional bool trash_image = 16;
+  optional bool disable_auto_resize = 17;
+}
+
+message namespaces_info {
+  int32 status = 1;
+  string error_message = 2;
+  string subsystem_nqn = 3;
+  repeated namespace_cli namespaces = 4;
+}

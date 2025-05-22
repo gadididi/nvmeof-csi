@@ -22,8 +22,8 @@ import (
 
 	"k8s.io/klog"
 
-	"github.com/spdk/spdk-csi/pkg/spdk"
-	"github.com/spdk/spdk-csi/pkg/util"
+	"github.com/gadididi/nvmeof-csi/pkg/spdk"
+	"github.com/gadididi/nvmeof-csi/pkg/util"
 )
 
 const (

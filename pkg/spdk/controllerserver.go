@@ -29,14 +29,15 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"k8s.io/klog"
 
-	csicommon "github.com/spdk/spdk-csi/pkg/csi-common"
-	"github.com/spdk/spdk-csi/pkg/util"
+	csicommon "github.com/gadididi/nvmeof-csi/pkg/csi-common"
+	"github.com/gadididi/nvmeof-csi/pkg/util"
 )
 
 var errVolumeInCreation = status.Error(codes.Internal, "volume in creation")
 
 type controllerServer struct {
-	*csicommon.DefaultControllerServer
+	csi.UnimplementedControllerServer
+	defaultImpl     *csicommon.DefaultControllerServer
 	spdkNodeConfigs map[string]*util.SpdkNodeConfig
 	volumeLocks     *util.VolumeLocks
 }
@@ -111,7 +112,7 @@ func (cs *controllerServer) ValidateVolumeCapabilities(_ context.Context, req *c
 	// make sure we support all requested caps
 	for _, cap := range req.VolumeCapabilities {
 		supported := false
-		for _, accessMode := range cs.Driver.GetVolumeCapabilityAccessModes() {
+		for _, accessMode := range cs.defaultImpl.Driver.GetVolumeCapabilityAccessModes() {
 			if cap.GetAccessMode().GetMode() == accessMode.GetMode() {
 				supported = true
 				break
@@ -422,9 +423,9 @@ func (cs *controllerServer) getSpdkNode(nodeName string, secrets map[string]stri
 
 func newControllerServer(d *csicommon.CSIDriver) (*controllerServer, error) {
 	server := controllerServer{
-		DefaultControllerServer: csicommon.NewDefaultControllerServer(d),
-		spdkNodeConfigs:         map[string]*util.SpdkNodeConfig{},
-		volumeLocks:             util.NewVolumeLocks(),
+		defaultImpl:     csicommon.NewDefaultControllerServer(d),
+		spdkNodeConfigs: map[string]*util.SpdkNodeConfig{},
+		volumeLocks:     util.NewVolumeLocks(),
 	}
 
 	config, err := util.NewCSIControllerConfig("SPDKCSI_CONFIG", "/etc/spdkcsi-config/config.json")
