@@ -5,22 +5,22 @@
 kind: StatefulSet
 apiVersion: apps/v1
 metadata:
-  name: spdkcsi-controller
+  name:  nvmeof-csi-controller
 spec:
-  serviceName: spdkcsi-controller
+  serviceName: nvmeof-csi-controller
   replicas: 1
   selector:
     matchLabels:
-      app: spdkcsi-controller
+      app: nvmeof-csi-controller
   template:
     metadata:
       labels:
-        app: spdkcsi-controller
+        app: nvmeof-csi-controller
     spec:
-      serviceAccount: spdkcsi-controller-sa
+      serviceAccount: nvmeof-csi-controller-sa
       hostNetwork: true
       containers:
-      - name: spdkcsi-provisioner
+      - name: csi-provisioner
         image: registry.k8s.io/sig-storage/csi-provisioner:v3.5.0
         imagePullPolicy: "IfNotPresent"
         args:
@@ -32,19 +32,8 @@ spec:
         volumeMounts:
         - name: socket-dir
           mountPath: /csi
-      - name: spdkcsi-snapshotter
-        image: registry.k8s.io/sig-storage/csi-snapshotter:v6.2.2
-        args:
-        - "--csi-address=unix:///csi/csi-provisioner.sock"
-        - "--v=5"
-        - "--timeout=150s"
-        - "--leader-election=true"
-        imagePullPolicy: "IfNotPresent"
-        volumeMounts:
-        - name: socket-dir
-          mountPath: /csi
-      - name: spdkcsi-controller
-        image: spdkcsi/spdkcsi:canary
+      - name: nvmeof-csi
+        image: quay.io/gdidi/nvmeof-csi:latest
         imagePullPolicy: "IfNotPresent"
         args:
         - "--v=5"
@@ -59,13 +48,13 @@ spec:
         volumeMounts:
         - name: socket-dir
           mountPath: /csi
-        - name: spdkcsi-config
-          mountPath: /etc/spdkcsi-config/
+        - name: nvmeof-csi-config
+          mountPath: /etc/nvmeof-csi-config/
           readOnly: true
       volumes:
       - name: socket-dir
         emptyDir:
           medium: "Memory"
-      - name: spdkcsi-config
+      - name: nvmeof-csi-config
         configMap:
-          name: spdkcsi-cm
+          name: nvmeof-csi-config

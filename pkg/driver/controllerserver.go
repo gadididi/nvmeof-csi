@@ -89,7 +89,7 @@ func (cs *controllerServer) createVolume(req *csi.CreateVolumeRequest) (*csi.Vol
 	size := req.GetCapacityRange().GetRequiredBytes()
 	if size == 0 {
 		klog.Warningln("invalid volume size, defaulting to 1GiB")
-		size = 1 * 1024 * 1024 * 1024 // 1GiB
+		size = 1 * 200 * 1024 * 1024 // 200MB
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -99,7 +99,7 @@ func (cs *controllerServer) createVolume(req *csi.CreateVolumeRequest) (*csi.Vol
 	nsReq := &gatewaypb.NamespaceAddReq{
 		RbdPoolName:       "mypool", // adjust as needed
 		RbdImageName:      req.GetName(),
-		SubsystemNqn:      "nqn.2023-01.io.spdk:csi", // adjust if needed
+		SubsystemNqn:      "nqn.2016-06.io.spdk:cnode1.mygroup1", // adjust if needed
 		BlockSize:         4096,
 		CreateImage:       proto.Bool(true),
 		Size:              proto.Uint64(uint64(size)),
@@ -131,7 +131,7 @@ func newControllerServer(d *csicommon.CSIDriver) (*controllerServer, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, err := grpc.DialContext(ctx, "localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	conn, err := grpc.DialContext(ctx, "10.242.64.32:5500", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to Gateway gRPC server: %w", err)
 	}

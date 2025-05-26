@@ -1,23 +1,17 @@
-# SPDX-License-Identifier: Apache-2.0
-# Copyright (c) Arm Limited and Contributors
-# Copyright (c) Intel Corporation
----
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: spdkcsi-cm
+  name: nvmeof-csi-config
 data:
-  # rpcURL: spdk json rpc target
-  # targetType: nvme-rdma, nvme-tcp, iscsi
-  # targetAddr: target service IP
   config.json: |-
     {
       "nodes": [
         {
-          "name": "localhost",
-          "rpcURL": "http://127.0.0.1:9009",
+          "name": "nvmeof-gateway-node",
+          "grpcAddress": "10.242.64.32:5500",
           "targetType": "nvme-tcp",
-          "targetAddr": "127.0.0.1"
+          "targetAddr": "10.242.64.32",
+          "targetPort": 4420
         }
       ]
     }

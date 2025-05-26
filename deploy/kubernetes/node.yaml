@@ -5,20 +5,20 @@
 kind: DaemonSet
 apiVersion: apps/v1
 metadata:
-  name: spdkcsi-node
+  name: nvmeof-csi-node
 spec:
   selector:
     matchLabels:
-      app: spdkcsi-node
+      app: nvmeof-csi-node
   template:
     metadata:
       labels:
-        app: spdkcsi-node
+        app: nvmeof-csi-node
     spec:
-      serviceAccount: spdkcsi-node-sa
+      serviceAccount: nvmeof-csi-node-sa
       hostNetwork: true
       containers:
-      - name: spdkcsi-registrar
+      - name: csi-registrar
         securityContext:
           privileged: true
         image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.8.0
@@ -26,12 +26,12 @@ spec:
         args:
         - "--v=5"
         - "--csi-address=unix:///csi/csi.sock"
-        - "--kubelet-registration-path=/var/lib/kubelet/plugins/csi.spdk.io/csi.sock"
+        - "--kubelet-registration-path=/var/lib/kubelet/plugins/csi.nvmeof.io/csi.sock"
         livenessProbe:
           exec:
             command:
             - /csi-node-driver-registrar
-            - --kubelet-registration-path=/var/lib/kubelet/plugins/csi.spdk.io/csi.sock
+            - --kubelet-registration-path=/var/lib/kubelet/plugins/csi.nvmeof.io/csi.sock
             - --mode=kubelet-registration-probe
           initialDelaySeconds: 30
           timeoutSeconds: 15
@@ -40,13 +40,13 @@ spec:
           mountPath: /csi
         - name: registration-dir
           mountPath: /registration
-      - name: spdkcsi-node
+      - name: nvmeof-csi-node
         securityContext:
           privileged: true
           capabilities:
             add: ["SYS_ADMIN"]
           allowPrivilegeEscalation: true
-        image: spdkcsi/spdkcsi:canary
+        image: quay.io/gdidi/nvmeof-csi:latest
         imagePullPolicy: "IfNotPresent"
         args:
         - "--v=5"
@@ -76,13 +76,13 @@ spec:
           mountPath: /dev
         - name: host-sys
           mountPath: /sys
-        - name: spdkcsi-nodeserver-config
-          mountPath: /etc/spdkcsi-nodeserver-config/
+        - name: nvmeof-csi-nodeserver-config
+          mountPath: /etc/nvmeof-csi-nodeserver-config/
           readOnly: true
       volumes:
       - name: socket-dir
         hostPath:
-          path: /var/lib/kubelet/plugins/csi.spdk.io
+          path: /var/lib/kubelet/plugins/csi.nvmeof.io
           type: DirectoryOrCreate
       - name: registration-dir
         hostPath:
@@ -102,7 +102,7 @@ spec:
       - name: host-sys
         hostPath:
           path: /sys
-      - name: spdkcsi-nodeserver-config
+      - name: nvmeof-csi-nodeserver-config
         configMap:
-          name: spdkcsi-nodeservercm
+          name: nvmeof-csi-nodeservercm
           optional: true

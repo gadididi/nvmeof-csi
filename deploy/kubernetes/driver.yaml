@@ -5,7 +5,7 @@
 apiVersion: storage.k8s.io/v1
 kind: CSIDriver
 metadata:
-  name: csi.spdk.io
+  name: csi.nvmeof.io
 spec:
   attachRequired: false
   volumeLifecycleModes:
