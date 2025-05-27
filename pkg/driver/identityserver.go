@@ -35,6 +35,10 @@ func newIdentityServer(d *csicommon.CSIDriver) *identityServer {
 	}
 }
 
+func (ids *identityServer) Probe(ctx context.Context, req *csi.ProbeRequest) (*csi.ProbeResponse, error) {
+	return ids.defaultImpl.Probe(ctx, req)
+}
+
 func (ids *identityServer) GetPluginCapabilities(_ context.Context, _ *csi.GetPluginCapabilitiesRequest) (*csi.GetPluginCapabilitiesResponse, error) {
 	return &csi.GetPluginCapabilitiesResponse{
 		Capabilities: []*csi.PluginCapability{
@@ -54,4 +58,8 @@ func (ids *identityServer) GetPluginCapabilities(_ context.Context, _ *csi.GetPl
 			},
 		},
 	}, nil
+}
+
+func (ids *identityServer) GetPluginInfo(ctx context.Context, req *csi.GetPluginInfoRequest) (*csi.GetPluginInfoResponse, error) {
+	return ids.defaultImpl.GetPluginInfo(ctx, req)
 }

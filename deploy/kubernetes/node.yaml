@@ -62,7 +62,7 @@ spec:
           postStart:
             exec:
               command: ["/bin/sh", "-c",
-                        "/usr/sbin/iscsid || echo failed to start iscsid"]
+                        "echo Hiiiiiiiiiiiiiiii"]
         volumeMounts:
         - name: socket-dir
           mountPath: /csi

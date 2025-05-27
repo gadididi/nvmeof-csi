@@ -145,3 +145,8 @@ func newControllerServer(d *csicommon.CSIDriver) (*controllerServer, error) {
 
 	return server, nil
 }
+
+func (cs *controllerServer) ControllerGetCapabilities(ctx context.Context, req *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
+	klog.V(4).Info("Forwarding ControllerGetCapabilities to defaultImpl")
+	return cs.defaultImpl.ControllerGetCapabilities(ctx, req)
+}
