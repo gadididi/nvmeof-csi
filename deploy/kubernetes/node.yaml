@@ -58,11 +58,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
-        lifecycle:
-          postStart:
-            exec:
-              command: ["/bin/sh", "-c",
-                        "echo Hiiiiiiiiiiiiiiii"]
         volumeMounts:
         - name: socket-dir
           mountPath: /csi

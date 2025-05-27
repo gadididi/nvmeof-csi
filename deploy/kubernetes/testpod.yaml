@@ -5,30 +5,30 @@
 kind: PersistentVolumeClaim
 apiVersion: v1
 metadata:
-  name: spdkcsi-pvc
+  name: nvmeof-test-pvc
 spec:
   accessModes:
   - ReadWriteOnce
   resources:
     requests:
       storage: 64Mi
-  storageClassName: spdkcsi-sc
+  storageClassName: nvmeof-csi-sc
 
----
-kind: Pod
-apiVersion: v1
-metadata:
-  name: spdkcsi-test
-spec:
-  containers:
-  - name: alpine
-    image: alpine:3
-    imagePullPolicy: "IfNotPresent"
-    command: ["sleep", "365d"]
-    volumeMounts:
-    - mountPath: "/spdkvol"
-      name: spdk-volume
-  volumes:
-  - name: spdk-volume
-    persistentVolumeClaim:
-      claimName: spdkcsi-pvc
+# ---
+# kind: Pod
+# apiVersion: v1
+# metadata:
+#   name: nvmeof-csi-test
+# spec:
+#   containers:
+#   - name: alpine
+#     image: alpine:3
+#     imagePullPolicy: "IfNotPresent"
+#     command: ["sleep", "365d"]
+#     volumeMounts:
+#     - mountPath: "/spdkvol"
+#       name: spdk-volume
+#   volumes:
+#   - name: spdk-volume
+#     persistentVolumeClaim:
+#       claimName: spdkcsi-pvc
