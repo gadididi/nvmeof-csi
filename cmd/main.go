@@ -39,7 +39,7 @@ func init() {
 	flag.StringVar(&conf.DriverName, "drivername", driverName, "Name of the driver")
 	flag.StringVar(&conf.Endpoint, "endpoint", "unix://tmp/nvmeofcsi.sock", "CSI endpoint")
 	flag.StringVar(&conf.NodeID, "nodeid", "", "node id")
-	flag.BoolVar(&conf.IsControllerServer, "controller", false, "Start controller server")
+	flag.BoolVar(&conf.IsControllerServer, "controller", true, "Start controller server")
 	flag.BoolVar(&conf.IsNodeServer, "node", false, "Start node server")
 
 	klog.InitFlags(nil)

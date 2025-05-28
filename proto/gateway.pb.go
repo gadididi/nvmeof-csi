@@ -762,7 +762,7 @@ var File_gateway_proto protoreflect.FileDescriptor
 
 const file_gateway_proto_rawDesc = "" +
 	"\n" +
-	"\rgateway.proto\x12\agateway\"\xd7\x04\n" +
+	"\rgateway.proto\"\xd7\x04\n" +
 	"\x11namespace_add_req\x12\"\n" +
 	"\rrbd_pool_name\x18\x01 \x01(\tR\vrbdPoolName\x12$\n" +
 	"\x0erbd_image_name\x18\x02 \x01(\tR\frbdImageName\x12#\n" +
@@ -840,22 +840,22 @@ const file_gateway_proto_rawDesc = "" +
 	"\x13disable_auto_resize\x18\x11 \x01(\bH\x02R\x11disableAutoResize\x88\x01\x01B\x13\n" +
 	"\x11_ns_subsystem_nqnB\x0e\n" +
 	"\f_trash_imageB\x16\n" +
-	"\x14_disable_auto_resize\"\xab\x01\n" +
+	"\x14_disable_auto_resize\"\xa3\x01\n" +
 	"\x0fnamespaces_info\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12#\n" +
-	"\rsubsystem_nqn\x18\x03 \x01(\tR\fsubsystemNqn\x126\n" +
+	"\rsubsystem_nqn\x18\x03 \x01(\tR\fsubsystemNqn\x12.\n" +
 	"\n" +
-	"namespaces\x18\x04 \x03(\v2\x16.gateway.namespace_cliR\n" +
+	"namespaces\x18\x04 \x03(\v2\x0e.namespace_cliR\n" +
 	"namespaces*#\n" +
 	"\rAddressFamily\x12\b\n" +
 	"\x04ipv4\x10\x00\x12\b\n" +
-	"\x04ipv6\x10\x012\xaf\x02\n" +
-	"\aGateway\x12C\n" +
-	"\rnamespace_add\x12\x1a.gateway.namespace_add_req\x1a\x14.gateway.nsid_status\"\x00\x12H\n" +
-	"\x10namespace_resize\x12\x1d.gateway.namespace_resize_req\x1a\x13.gateway.req_status\"\x00\x12H\n" +
-	"\x10namespace_delete\x12\x1d.gateway.namespace_delete_req\x1a\x13.gateway.req_status\"\x00\x12K\n" +
-	"\x0flist_namespaces\x12\x1c.gateway.list_namespaces_req\x1a\x18.gateway.namespaces_info\"\x00B\"Z nvmeof-csi/proto/gateway;gatewayb\x06proto3"
+	"\x04ipv6\x10\x012\xef\x01\n" +
+	"\aGateway\x123\n" +
+	"\rnamespace_add\x12\x12.namespace_add_req\x1a\f.nsid_status\"\x00\x128\n" +
+	"\x10namespace_resize\x12\x15.namespace_resize_req\x1a\v.req_status\"\x00\x128\n" +
+	"\x10namespace_delete\x12\x15.namespace_delete_req\x1a\v.req_status\"\x00\x12;\n" +
+	"\x0flist_namespaces\x12\x14.list_namespaces_req\x1a\x10.namespaces_info\"\x00B\"Z nvmeof-csi/proto/gateway;gatewayb\x06proto3"
 
 var (
 	file_gateway_proto_rawDescOnce sync.Once
@@ -872,26 +872,26 @@ func file_gateway_proto_rawDescGZIP() []byte {
 var file_gateway_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_gateway_proto_goTypes = []any{
-	(AddressFamily)(0),         // 0: gateway.AddressFamily
-	(*NamespaceAddReq)(nil),    // 1: gateway.namespace_add_req
-	(*NamespaceResizeReq)(nil), // 2: gateway.namespace_resize_req
-	(*NamespaceDeleteReq)(nil), // 3: gateway.namespace_delete_req
-	(*ListNamespacesReq)(nil),  // 4: gateway.list_namespaces_req
-	(*ReqStatus)(nil),          // 5: gateway.req_status
-	(*NsidStatus)(nil),         // 6: gateway.nsid_status
-	(*NamespaceCli)(nil),       // 7: gateway.namespace_cli
-	(*NamespacesInfo)(nil),     // 8: gateway.namespaces_info
+	(AddressFamily)(0),         // 0: AddressFamily
+	(*NamespaceAddReq)(nil),    // 1: namespace_add_req
+	(*NamespaceResizeReq)(nil), // 2: namespace_resize_req
+	(*NamespaceDeleteReq)(nil), // 3: namespace_delete_req
+	(*ListNamespacesReq)(nil),  // 4: list_namespaces_req
+	(*ReqStatus)(nil),          // 5: req_status
+	(*NsidStatus)(nil),         // 6: nsid_status
+	(*NamespaceCli)(nil),       // 7: namespace_cli
+	(*NamespacesInfo)(nil),     // 8: namespaces_info
 }
 var file_gateway_proto_depIdxs = []int32{
-	7, // 0: gateway.namespaces_info.namespaces:type_name -> gateway.namespace_cli
-	1, // 1: gateway.Gateway.namespace_add:input_type -> gateway.namespace_add_req
-	2, // 2: gateway.Gateway.namespace_resize:input_type -> gateway.namespace_resize_req
-	3, // 3: gateway.Gateway.namespace_delete:input_type -> gateway.namespace_delete_req
-	4, // 4: gateway.Gateway.list_namespaces:input_type -> gateway.list_namespaces_req
-	6, // 5: gateway.Gateway.namespace_add:output_type -> gateway.nsid_status
-	5, // 6: gateway.Gateway.namespace_resize:output_type -> gateway.req_status
-	5, // 7: gateway.Gateway.namespace_delete:output_type -> gateway.req_status
-	8, // 8: gateway.Gateway.list_namespaces:output_type -> gateway.namespaces_info
+	7, // 0: namespaces_info.namespaces:type_name -> namespace_cli
+	1, // 1: Gateway.namespace_add:input_type -> namespace_add_req
+	2, // 2: Gateway.namespace_resize:input_type -> namespace_resize_req
+	3, // 3: Gateway.namespace_delete:input_type -> namespace_delete_req
+	4, // 4: Gateway.list_namespaces:input_type -> list_namespaces_req
+	6, // 5: Gateway.namespace_add:output_type -> nsid_status
+	5, // 6: Gateway.namespace_resize:output_type -> req_status
+	5, // 7: Gateway.namespace_delete:output_type -> req_status
+	8, // 8: Gateway.list_namespaces:output_type -> namespaces_info
 	5, // [5:9] is the sub-list for method output_type
 	1, // [1:5] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name

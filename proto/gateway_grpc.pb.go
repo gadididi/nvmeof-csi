@@ -19,10 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Gateway_NamespaceAdd_FullMethodName    = "/gateway.Gateway/namespace_add"
-	Gateway_NamespaceResize_FullMethodName = "/gateway.Gateway/namespace_resize"
-	Gateway_NamespaceDelete_FullMethodName = "/gateway.Gateway/namespace_delete"
-	Gateway_ListNamespaces_FullMethodName  = "/gateway.Gateway/list_namespaces"
+	Gateway_NamespaceAdd_FullMethodName    = "/Gateway/namespace_add"
+	Gateway_NamespaceResize_FullMethodName = "/Gateway/namespace_resize"
+	Gateway_NamespaceDelete_FullMethodName = "/Gateway/namespace_delete"
+	Gateway_ListNamespaces_FullMethodName  = "/Gateway/list_namespaces"
 )
 
 // GatewayClient is the client API for Gateway service.
@@ -212,7 +212,7 @@ func _Gateway_ListNamespaces_Handler(srv interface{}, ctx context.Context, dec f
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var Gateway_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "gateway.Gateway",
+	ServiceName: "Gateway",
 	HandlerType: (*GatewayServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{

@@ -1,6 +1,5 @@
 syntax = "proto3";
 
-package gateway;
 
 option go_package = "nvmeof-csi/proto/gateway;gateway";
 
