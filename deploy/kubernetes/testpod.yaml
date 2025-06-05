@@ -9,26 +9,31 @@ metadata:
 spec:
   accessModes:
   - ReadWriteOnce
+  volumeMode: Block     # Raw block mode
   resources:
     requests:
       storage: 64Mi
   storageClassName: nvmeof-csi-sc
 
-# ---
-# kind: Pod
-# apiVersion: v1
-# metadata:
-#   name: nvmeof-csi-test
-# spec:
-#   containers:
-#   - name: alpine
-#     image: alpine:3
-#     imagePullPolicy: "IfNotPresent"
-#     command: ["sleep", "365d"]
-#     volumeMounts:
-#     - mountPath: "/spdkvol"
-#       name: spdk-volume
-#   volumes:
-#   - name: spdk-volume
-#     persistentVolumeClaim:
-#       claimName: spdkcsi-pvc
+---
+kind: Pod
+apiVersion: v1
+metadata:
+  name: dummy-nvme-pod
+spec:
+  containers:
+  - name: alpine
+    image: alpine:3
+    imagePullPolicy: "IfNotPresent"
+    command: ["sleep", "365d"]
+    volumeDevices:  # Raw block attachment
+      - name: dummy-vol
+        devicePath: /dev/nvme-test # Choose any path inside container
+  volumes:
+  - name: dummy-vol
+    persistentVolumeClaim:
+      claimName: nvmeof-test-pvc
+
+    # volumeMounts:
+    # - mountPath: "/spdkvol"
+    #   name: spdk-volume

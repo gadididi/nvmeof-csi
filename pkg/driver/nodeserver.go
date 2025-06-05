@@ -21,13 +21,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
+	osExec "os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog"
 	"k8s.io/utils/exec"
@@ -46,81 +46,11 @@ type nodeServer struct {
 	xpuConfigInfo *util.XpuConfig
 }
 
-// try to set up a connection to the first available xPU node in the list via grpc
-// once the connection is built, send pings every 10 seconds if there is no activity
-// FIXME (JingYan): when there are multiple xPU nodes, find a better way to choose one to connect with
-func connectXpuNode(xpuList []*util.XpuConfig) (*grpc.ClientConn, *util.XpuConfig) {
-	var xpuConnClient *grpc.ClientConn
-	var xpuConfigInfo *util.XpuConfig
-
-	for i := range xpuList {
-		conn, err := grpc.Dial(
-			xpuList[i].TargetAddr,
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithBlock(),
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                10 * time.Second,
-				Timeout:             1 * time.Second,
-				PermitWithoutStream: true,
-			}),
-			grpc.FailOnNonTempDialError(true),
-		)
-		if err != nil {
-			klog.Errorf("connect to xPU node: TargetType (%v), TargetAddr (%v) with err (%v)", xpuList[i].TargetType, xpuList[i].TargetAddr, err)
-		} else {
-			klog.Infof("successfully connected to xPU node: TargetType (%v), TargetAddr (%v)", xpuList[i].TargetType, xpuList[i].TargetAddr)
-			klog.Infof("ClassID (%v), VendorID (%v), DeviceID (%v)", xpuList[i].PciIDs.ClassID, xpuList[i].PciIDs.VendorID, xpuList[i].PciIDs.DeviceID)
-			xpuConnClient = conn
-			xpuConfigInfo = xpuList[i]
-			break
-		}
-	}
-
-	return xpuConnClient, xpuConfigInfo
-}
-
 func newNodeServer(d *csicommon.CSIDriver) (*nodeServer, error) {
 	ns := &nodeServer{
 		defaultImpl: csicommon.NewDefaultNodeServer(d),
 		mounter:     mount.New(""),
 		volumeLocks: util.NewVolumeLocks(),
-	}
-
-	// get xPU nodes' configs, see deploy/kubernetes/nodeserver-config-map.yaml
-	// as spdkcsi-nodeservercm configMap volume is optional when deploying k8s, check nodeserver-config-map.yaml is missing or empty
-	spdkcsiNodeServerConfigFile := "/etc/spdkcsi-nodeserver-config/nodeserver-config.json"
-	spdkcsiNodeServerConfigFileEnv := "SPDKCSI_CONFIG_NODESERVER"
-	configFile := util.FromEnv(spdkcsiNodeServerConfigFileEnv, spdkcsiNodeServerConfigFile)
-	_, err := os.Stat(configFile)
-	klog.Infof("check whether the configuration file (%s) which is supposed to contain xPU info exists", spdkcsiNodeServerConfigFile)
-	if os.IsNotExist(err) {
-		klog.Infof("configuration file specified in %s (%s by default) is missing or empty", spdkcsiNodeServerConfigFileEnv, spdkcsiNodeServerConfigFile)
-		return ns, nil
-	}
-
-	//nolint:tagliatelle // not using json:snake case
-	var config struct {
-		XpuList []*util.XpuConfig `json:"xpuList"`
-	}
-
-	err = util.ParseJSONFile(configFile, &config)
-	if err != nil {
-		return nil, fmt.Errorf("error in the configuration file specified in %s (%s by default): %w", spdkcsiNodeServerConfigFileEnv, spdkcsiNodeServerConfigFile, err)
-	}
-	klog.Infof("obtained xPU info (%v) from configuration file (%s)", config.XpuList, spdkcsiNodeServerConfigFile)
-
-	// try to connect a valid xPU node
-	ns.xpuConnClient, ns.xpuConfigInfo = connectXpuNode(config.XpuList)
-
-	if ns.xpuConfigInfo != nil {
-		if ns.xpuConfigInfo.TargetType == "xpu-opi-virtioblk" && !util.IsKvm(&ns.xpuConfigInfo.PciIDs) {
-			klog.Errorf("Creating OPI VirtioBlk device on xPU hardware is not supported yet")
-			ns.xpuConnClient = nil
-		}
-	}
-
-	if ns.xpuConnClient == nil {
-		klog.Infof("failed to connect to any xPU node in the xpuList or xpuList is empty or wrong configuration, will continue without xPU node")
 	}
 
 	return ns, nil
@@ -234,17 +164,95 @@ func (ns *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageV
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
+func findDeviceByNQN(nqn string) (string, error) {
+	entries, err := filepath.Glob("/dev/disk/by-id/nvme-*")
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range entries {
+		resolved, err := filepath.EvalSymlinks(entry)
+		if err == nil && strings.Contains(resolved, nqn) {
+			return resolved, nil
+		}
+	}
+	return "", fmt.Errorf("no device found for NQN %s", nqn)
+}
+
+func createBlockFileIfNotExists(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			return fmt.Errorf("failed to create block file: %v", err)
+		}
+		defer f.Close()
+	}
+	return nil
+}
+
 func (ns *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
+	targetPath := req.GetTargetPath()
+
+	// Lock per volume
 	unlock := ns.volumeLocks.Lock(volumeID)
 	defer unlock()
 
-	err := ns.publishVolume(getStagingTargetPath(req), req) // idempotent
-	if err != nil {
-		klog.Errorf("failed to publish volume, volumeID: %s err: %v", volumeID, err)
-		return nil, status.Error(codes.Internal, err.Error())
+	// Extract NVMe-oF connection info
+	nqn := req.GetVolumeContext()["nqn"]
+	traddr := req.GetVolumeContext()["traddr"]
+	trsvcid := req.GetVolumeContext()["trsvcid"]
+	transport := req.GetVolumeContext()["transport"]
+
+	if nqn == "" || traddr == "" || trsvcid == "" || transport == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "missing NVMe connection parameters")
 	}
+
+	klog.Infof("Connecting volume %s via NVMe: nqn=%s, traddr=%s, trsvcid=%s, transport=%s",
+		volumeID, nqn, traddr, trsvcid, transport)
+
+	// 1. Run `nvme connect`
+	cmd := osExec.Command("nvme", "connect",
+		"-t", transport,
+		"-n", nqn,
+		"-a", traddr,
+		"-s", trsvcid)
+	klog.Infof("Connecting NVMe volume with command: %v", cmd.Args)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		klog.Errorf("failed to connect volume %s: %v, output: %s", volumeID, err, string(output))
+		return nil, status.Errorf(codes.Internal, "nvme connect failed: %v", err)
+	}
+
+	// 2. Discover device path
+	devicePath, err := findDeviceByNQN(nqn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find NVMe device for NQN %s: %v", nqn, err)
+	}
+
+	// 3. If block mode, create a bind mount (raw block usage)
+	if req.GetVolumeCapability().GetBlock() != nil {
+
+		// Ensure parent directory of targetPath exists
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
+			return nil, fmt.Errorf("failed to create target path parent dir: %v", err)
+		}
+
+		// Ensure the target file exists
+		if err := createBlockFileIfNotExists(targetPath); err != nil {
+			return nil, err
+		}
+		// Bind-mount the block device to the target path
+		if err := ns.mounter.Mount(devicePath, targetPath, "", []string{"bind"}); err != nil {
+			return nil, status.Errorf(codes.Internal, "bind mount failed: %v", err)
+		}
+		return &csi.NodePublishVolumeResponse{}, nil
+	}
+
+	// 4. If mount mode: just expose the device, no mount
+	klog.Infof("Skipping mount for volume %s: device %s available", volumeID, devicePath)
 	return &csi.NodePublishVolumeResponse{}, nil
+
+	// klog.Infof("Successfully connected volume %s", volumeID)
+	// return &csi.NodePublishVolumeResponse{}, nil
 }
 
 func (ns *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
@@ -325,22 +333,9 @@ func (ns *nodeServer) isStaged(stagingPath string) (bool, error) {
 }
 
 // must be idempotent
-func (ns *nodeServer) publishVolume(stagingPath string, req *csi.NodePublishVolumeRequest) error {
-	targetPath := req.GetTargetPath()
-	mounted, err := ns.createMountPoint(targetPath)
-	if err != nil {
-		return err
-	}
-	if mounted {
-		return nil
-	}
+// func (ns *nodeServer) publishVolume(stagingPath string, req *csi.NodePublishVolumeRequest) error {
 
-	fsType := req.GetVolumeCapability().GetMount().GetFsType()
-	mntFlags := req.GetVolumeCapability().GetMount().GetMountFlags()
-	mntFlags = append(mntFlags, "bind")
-	klog.Infof("mount %s to %s, fstype: %s, flags: %v", stagingPath, targetPath, fsType, mntFlags)
-	return ns.mounter.Mount(stagingPath, targetPath, fsType, mntFlags)
-}
+// }
 
 // create mount point if not exists, return whether already mounted
 func (ns *nodeServer) createMountPoint(path string) (bool, error) {
@@ -384,4 +379,8 @@ func getStagingTargetPath(req interface{}) string {
 		return vr.GetStagingTargetPath() + "/" + vr.GetVolumeId()
 	}
 	return ""
+}
+
+func (ns *nodeServer) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
+	return ns.defaultImpl.NodeGetInfo(ctx, req)
 }
