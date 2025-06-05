@@ -164,18 +164,21 @@ func (ns *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageV
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
-func findDeviceByNQN(nqn string) (string, error) {
-	entries, err := filepath.Glob("/dev/disk/by-id/nvme-*")
+func findDeviceByUUID(uuid string) (string, error) {
+	paths, err := filepath.Glob("/dev/disk/by-id/nvme-uuid.*")
 	if err != nil {
 		return "", err
 	}
-	for _, entry := range entries {
-		resolved, err := filepath.EvalSymlinks(entry)
-		if err == nil && strings.Contains(resolved, nqn) {
-			return resolved, nil
+	for _, path := range paths {
+		if strings.Contains(path, uuid) {
+			dev, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				continue
+			}
+			return dev, nil
 		}
 	}
-	return "", fmt.Errorf("no device found for NQN %s", nqn)
+	return "", fmt.Errorf("device with UUID %s not found", uuid)
 }
 
 func createBlockFileIfNotExists(path string) error {
@@ -202,20 +205,33 @@ func (ns *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishV
 	traddr := req.GetVolumeContext()["traddr"]
 	trsvcid := req.GetVolumeContext()["trsvcid"]
 	transport := req.GetVolumeContext()["transport"]
+	uuid := req.GetVolumeContext()["uuid"]
 
-	if nqn == "" || traddr == "" || trsvcid == "" || transport == "" {
+	if nqn == "" || traddr == "" || trsvcid == "" || transport == "" || uuid == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "missing NVMe connection parameters")
 	}
 
 	klog.Infof("Connecting volume %s via NVMe: nqn=%s, traddr=%s, trsvcid=%s, transport=%s",
 		volumeID, nqn, traddr, trsvcid, transport)
 
+	// --- INSERTED DISCOVERY COMMAND ---
+	discover_port := "8009"
+	discoverCmd := osExec.Command("nvme", "discover",
+		"-t", transport,
+		"-a", traddr,
+		"-s", discover_port)
+	klog.Infof("Running NVMe discovery: %v", discoverCmd.Args)
+	if output, err := discoverCmd.CombinedOutput(); err != nil {
+		klog.Errorf("nvme discover failed: %v, output: %s", err, string(output))
+		return nil, status.Errorf(codes.Internal, "nvme discover failed: %v", err)
+	}
+
 	// 1. Run `nvme connect`
-	cmd := osExec.Command("nvme", "connect",
+	cmd := osExec.Command("nvme", "connect-all",
 		"-t", transport,
 		"-n", nqn,
 		"-a", traddr,
-		"-s", trsvcid)
+		"-l", "1800")
 	klog.Infof("Connecting NVMe volume with command: %v", cmd.Args)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		klog.Errorf("failed to connect volume %s: %v, output: %s", volumeID, err, string(output))
@@ -223,9 +239,9 @@ func (ns *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishV
 	}
 
 	// 2. Discover device path
-	devicePath, err := findDeviceByNQN(nqn)
+	devicePath, err := findDeviceByUUID(uuid)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find NVMe device for NQN %s: %v", nqn, err)
+		return nil, fmt.Errorf("failed to find NVMe device for NQN %s: %v", uuid, err)
 	}
 
 	// 3. If block mode, create a bind mount (raw block usage)

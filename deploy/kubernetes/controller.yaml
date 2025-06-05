@@ -25,10 +25,13 @@ spec:
         imagePullPolicy: "IfNotPresent"
         args:
         - "--v=5"
-        - "--csi-address=unix:///csi/csi-provisioner.sock"
-        - "--timeout=30s"
+        - "--csi-address=$(ADDRESS)"
+        - "--timeout=150s"
         - "--retry-interval-start=500ms"
         - "--leader-election=true"
+        env:
+          - name: ADDRESS
+            value: unix:///csi/csi-provisioner.sock        
         volumeMounts:
         - name: socket-dir
           mountPath: /csi
@@ -37,20 +40,37 @@ spec:
         imagePullPolicy: "IfNotPresent"
         args:
         - "--v=5"
-        - "--endpoint=unix:///csi/csi-provisioner.sock"
+        - "--endpoint=$(CSI_ENDPOINT)"
         - "--nodeid=$(NODE_ID)"
         - "--controller"
         env:
-        - name: NODE_ID
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
+          - name: NODE_ID
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          - name: CSI_ENDPOINT
+            value: unix:///csi/csi-provisioner.sock                
         volumeMounts:
         - name: socket-dir
           mountPath: /csi
         - name: nvmeof-csi-config
           mountPath: /etc/nvmeof-csi-config/
           readOnly: true
+      - name: csi-attacher
+        image: registry.k8s.io/sig-storage/csi-attacher:v4.8.0
+        imagePullPolicy: "IfNotPresent"
+        args:
+          - "--v=5"
+          - "--csi-address=$(ADDRESS)"
+          - "--leader-election=true"
+          - "--retry-interval-start=500ms"
+          - "--timeout=150s"
+        env:
+          - name: ADDRESS
+            value: unix:///csi/csi-provisioner.sock
+        volumeMounts:
+          - name: socket-dir
+            mountPath: /csi            
       volumes:
       - name: socket-dir
         emptyDir:

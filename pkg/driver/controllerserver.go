@@ -126,10 +126,70 @@ func (cs *controllerServer) createVolume(req *csi.CreateVolumeRequest) (*csi.Vol
 			"traddr":    "10.242.64.32", // Replace with real target IP or use resp.GetTraddr()
 			"trsvcid":   "4420",         // Standard NVMe-oF port, or use from response
 			"transport": "tcp",          // Or "rdma" if you're using it
+			"image":     req.GetName(),  // add this!
 		},
 		ContentSource: req.GetVolumeContentSource(),
 	}
 	return vol, nil
+}
+
+func (cs *controllerServer) ControllerPublishVolume(
+	ctx context.Context,
+	req *csi.ControllerPublishVolumeRequest,
+) (*csi.ControllerPublishVolumeResponse, error) {
+	// Example: Call Gateway list_namespaces, find the one matching the VolumeId
+	// and send the UUID to the target node (e.g. via Node info in req)
+
+	klog.Infof("Publishing volume %s to node %s", req.VolumeId, req.NodeId)
+
+	nsListReq := &gatewaypb.ListNamespacesReq{
+		Subsystem: req.VolumeId, // same as used in VolumeId
+	}
+
+	nsListResp, err := cs.gatewayClient.ListNamespaces(ctx, nsListReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list namespaces: %w", err)
+	}
+
+	var targetUUID string
+	for _, ns := range nsListResp.GetNamespaces() {
+		// print the ns
+		klog.Infof("Found namespace: %s, UUID: %s, Image: %s", ns.GetNsSubsystemNqn(), ns.GetUuid(), ns.GetRbdImageName())
+		if ns.GetRbdImageName() == req.VolumeContext["image"] {
+			targetUUID = ns.GetUuid()
+			break
+		}
+	}
+	if targetUUID == "" {
+		return nil, fmt.Errorf("UUID not found for volume %s", req.VolumeId)
+	}
+
+	// You could now "notify" the node, or embed the UUID in context for NodePublishVolume
+	publishContext := map[string]string{
+		"uuid":      targetUUID,
+		"nqn":       req.VolumeId,
+		"traddr":    req.VolumeContext["traddr"],
+		"trsvcid":   req.VolumeContext["trsvcid"],
+		"transport": req.VolumeContext["transport"],
+	}
+
+	return &csi.ControllerPublishVolumeResponse{
+		PublishContext: publishContext,
+	}, nil
+}
+
+func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
+	volumeID := req.GetVolumeId()
+	if volumeID == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume ID is required")
+	}
+
+	// TODO: Add logic to delete the volume from your backend (e.g., via gRPC to Gateway)
+
+	// Log success
+	klog.Infof("Deleted volume: %s", volumeID)
+
+	return &csi.DeleteVolumeResponse{}, nil
 }
 
 func newControllerServer(d *csicommon.CSIDriver) (*controllerServer, error) {
