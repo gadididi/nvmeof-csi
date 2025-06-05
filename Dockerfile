@@ -24,7 +24,13 @@ COPY . .
 RUN go build -o nvmeof-csi ./cmd/
 
 # -------- Runtime Stage --------
-FROM gcr.io/distroless/static:nonroot
+FROM debian:bookworm-slim
+
+# Install nvme-cli and dependencies
+RUN apt-get update && \
+    apt-get install -y nvme-cli && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /
 

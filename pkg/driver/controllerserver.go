@@ -120,7 +120,13 @@ func (cs *controllerServer) createVolume(req *csi.CreateVolumeRequest) (*csi.Vol
 	vol := &csi.Volume{
 		VolumeId:      "nqn.2016-06.io.spdk:cnode1.mygroup1",
 		CapacityBytes: size,
-		VolumeContext: req.GetParameters(),
+		//VolumeContext: req.GetParameters(),
+		VolumeContext: map[string]string{
+			"nqn":       nsReq.SubsystemNqn,
+			"traddr":    "10.242.64.32", // Replace with real target IP or use resp.GetTraddr()
+			"trsvcid":   "4420",         // Standard NVMe-oF port, or use from response
+			"transport": "tcp",          // Or "rdma" if you're using it
+		},
 		ContentSource: req.GetVolumeContentSource(),
 	}
 	return vol, nil
