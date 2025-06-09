@@ -64,28 +64,11 @@ func (cs *controllerServer) CreateVolume(_ context.Context, req *csi.CreateVolum
 	return &csi.CreateVolumeResponse{Volume: csiVolume}, nil
 }
 
-func (cs *controllerServer) ValidateVolumeCapabilities(_ context.Context, req *csi.ValidateVolumeCapabilitiesRequest) (*csi.ValidateVolumeCapabilitiesResponse, error) {
-	// make sure we support all requested caps
-	for _, cap := range req.VolumeCapabilities {
-		supported := false
-		for _, accessMode := range cs.defaultImpl.Driver.GetVolumeCapabilityAccessModes() {
-			if cap.GetAccessMode().GetMode() == accessMode.GetMode() {
-				supported = true
-				break
-			}
-		}
-		if !supported {
-			return &csi.ValidateVolumeCapabilitiesResponse{Message: ""}, nil
-		}
-	}
-	return &csi.ValidateVolumeCapabilitiesResponse{
-		Confirmed: &csi.ValidateVolumeCapabilitiesResponse_Confirmed{
-			VolumeCapabilities: req.VolumeCapabilities,
-		},
-	}, nil
-}
-
 func (cs *controllerServer) createVolume(req *csi.CreateVolumeRequest) (*csi.Volume, error) {
+	var (
+		resp *gatewaypb.NsidStatus
+		err  error
+	)
 	size := req.GetCapacityRange().GetRequiredBytes()
 	if size == 0 {
 		klog.Warningln("invalid volume size, defaulting to 1GiB")
@@ -108,7 +91,7 @@ func (cs *controllerServer) createVolume(req *csi.CreateVolumeRequest) (*csi.Vol
 	}
 
 	// Call Gateway
-	resp, err := cs.gatewayClient.NamespaceAdd(ctx, nsReq)
+	resp, err = cs.gatewayClient.NamespaceAdd(ctx, nsReq)
 	if err != nil {
 		return nil, fmt.Errorf("gateway NamespaceAdd failed: %w", err)
 	}
@@ -131,6 +114,27 @@ func (cs *controllerServer) createVolume(req *csi.CreateVolumeRequest) (*csi.Vol
 		ContentSource: req.GetVolumeContentSource(),
 	}
 	return vol, nil
+}
+
+func (cs *controllerServer) ValidateVolumeCapabilities(_ context.Context, req *csi.ValidateVolumeCapabilitiesRequest) (*csi.ValidateVolumeCapabilitiesResponse, error) {
+	// make sure we support all requested caps
+	for _, cap := range req.VolumeCapabilities {
+		supported := false
+		for _, accessMode := range cs.defaultImpl.Driver.GetVolumeCapabilityAccessModes() {
+			if cap.GetAccessMode().GetMode() == accessMode.GetMode() {
+				supported = true
+				break
+			}
+		}
+		if !supported {
+			return &csi.ValidateVolumeCapabilitiesResponse{Message: ""}, nil
+		}
+	}
+	return &csi.ValidateVolumeCapabilitiesResponse{
+		Confirmed: &csi.ValidateVolumeCapabilitiesResponse_Confirmed{
+			VolumeCapabilities: req.VolumeCapabilities,
+		},
+	}, nil
 }
 
 func (cs *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {

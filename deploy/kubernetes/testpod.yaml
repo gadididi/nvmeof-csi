@@ -35,5 +35,5 @@ spec:
       claimName: nvmeof-test-pvc
 
     # volumeMounts:
-    # - mountPath: "/spdkvol"
-    #   name: spdk-volume
+    # - mountPath: "/dev/nvme-test"
+    #   name: dummy-vol

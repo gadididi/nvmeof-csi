@@ -18,7 +18,6 @@ package driver
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	osExec "os/exec"
@@ -26,11 +25,9 @@ import (
 	"strings"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog"
-	"k8s.io/utils/exec"
 	"k8s.io/utils/mount"
 
 	csicommon "nvmeof-csi/pkg/csi-common"
@@ -39,11 +36,9 @@ import (
 
 type nodeServer struct {
 	csi.UnimplementedNodeServer
-	defaultImpl   *csicommon.DefaultNodeServer
-	mounter       mount.Interface
-	volumeLocks   *util.VolumeLocks
-	xpuConnClient *grpc.ClientConn
-	xpuConfigInfo *util.XpuConfig
+	defaultImpl *csicommon.DefaultNodeServer
+	mounter     mount.Interface
+	volumeLocks *util.VolumeLocks
 }
 
 func newNodeServer(d *csicommon.CSIDriver) (*nodeServer, error) {
@@ -61,8 +56,7 @@ func (ns *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolum
 	unlock := ns.volumeLocks.Lock(volumeID)
 	defer unlock()
 
-	stagingParentPath := req.GetStagingTargetPath() // use this directory to persistently store VolumeContext
-	stagingTargetPath := getStagingTargetPath(req)
+	stagingTargetPath := req.GetStagingTargetPath() // use this directory to persistently store VolumeContext
 
 	isStaged, err := ns.isStaged(stagingTargetPath)
 	if err != nil {
@@ -74,18 +68,8 @@ func (ns *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolum
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
-	var initiator util.SpdkCsiInitiator
-	if ns.xpuConnClient != nil {
-		vc := req.GetVolumeContext()
-		vc["stagingParentPath"] = stagingParentPath
-		initiator, err = util.NewSpdkCsiXpuInitiator(vc, ns.xpuConnClient, ns.xpuConfigInfo)
-	} else {
-		initiator, err = util.NewSpdkCsiInitiator(req.GetVolumeContext())
-	}
-	if err != nil {
-		klog.Errorf("failed to create spdk initiator, volumeID: %s err: %v", volumeID, err)
-		return nil, status.Error(codes.Internal, err.Error())
-	}
+	var initiator util.NvmeofCsiInitiator
+	initiator, err = util.NewNvmeofCsiInitiator(req.GetPublishContext()) //TODO - make NvmeofCsiInitiator works
 
 	devicePath, err := initiator.Connect() // idempotent
 	if err != nil {
@@ -97,13 +81,13 @@ func (ns *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolum
 			initiator.Disconnect() //nolint:errcheck // ignore error
 		}
 	}()
-	if err = ns.stageVolume(devicePath, stagingTargetPath, req); err != nil { // idempotent
-		klog.Errorf("failed to stage volume, volumeID: %s devicePath:%s err: %v", volumeID, devicePath, err)
-		return nil, status.Error(codes.Internal, err.Error())
+
+	if err := util.WriteStringToFile(filepath.Join(stagingTargetPath, "devicePath"), devicePath); err != nil {
+		klog.Warningf("could not stash device path: %v", err)
 	}
-	// stash VolumeContext to stagingParentPath (useful during Unstage as it has no
+	// stash VolumeContext to stagingTargetPath (useful during Unstage as it has no
 	// VolumeContext passed to the RPC as per the CSI spec)
-	err = util.StashVolumeContext(req.GetVolumeContext(), stagingParentPath)
+	err = util.StashVolumeContext(req.GetVolumeContext(), stagingTargetPath)
 	if err != nil {
 		klog.Errorf("failed to stash volume context, volumeID: %s err: %v", volumeID, err)
 		return nil, status.Error(codes.Internal, err.Error())
@@ -116,8 +100,7 @@ func (ns *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageV
 	unlock := ns.volumeLocks.Lock(volumeID)
 	defer unlock()
 
-	stagingParentPath := req.GetStagingTargetPath()
-	stagingTargetPath := getStagingTargetPath(req)
+	stagingTargetPath := req.GetStagingTargetPath()
 
 	isStaged, err := ns.isStaged(stagingTargetPath)
 	if err != nil {
@@ -135,19 +118,13 @@ func (ns *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageV
 		return nil, status.Errorf(codes.Internal, "unstage volume %s failed: %s", volumeID, err)
 	}
 
-	volumeContext, err := util.LookupVolumeContext(stagingParentPath)
+	volumeContext, err := util.LookupVolumeContext(stagingTargetPath)
 	if err != nil {
 		klog.Errorf("failed to lookup volume context, volumeID: %s err: %v", volumeID, err)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	var initiator util.SpdkCsiInitiator
-	if ns.xpuConnClient != nil {
-		vc := volumeContext
-		vc["stagingParentPath"] = stagingParentPath
-		initiator, err = util.NewSpdkCsiXpuInitiator(vc, ns.xpuConnClient, ns.xpuConfigInfo)
-	} else {
-		initiator, err = util.NewSpdkCsiInitiator(volumeContext)
-	}
+	var initiator util.NvmeofCsiInitiator
+	initiator, err = util.NewNvmeofCsiInitiator(volumeContext)
 	if err != nil {
 		klog.Errorf("failed to create spdk initiator, volumeID: %s err: %v", volumeID, err)
 		return nil, status.Error(codes.Internal, err.Error())
@@ -157,7 +134,7 @@ func (ns *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageV
 		klog.Errorf("failed to disconnect initiator, volumeID: %s err: %v", volumeID, err)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	if err := util.CleanUpVolumeContext(stagingParentPath); err != nil {
+	if err := util.CleanUpVolumeContext(stagingTargetPath); err != nil {
 		klog.Errorf("failed to clean up volume context, volumeID: %s err: %v", volumeID, err)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -228,15 +205,20 @@ func (ns *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishV
 	}
 
 	// 1. Run `nvme connect`
-	cmd := osExec.Command("nvme", "connect-all",
+	connectCmd := osExec.Command("nvme", "connect-all",
 		"-t", transport,
-		"-n", nqn,
+		//"-n", nqn,
 		"-a", traddr,
 		"-l", "1800")
-	klog.Infof("Connecting NVMe volume with command: %v", cmd.Args)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		klog.Errorf("failed to connect volume %s: %v, output: %s", volumeID, err, string(output))
-		return nil, status.Errorf(codes.Internal, "nvme connect failed: %v", err)
+	klog.Infof("Connecting NVMe volume with command: %v", connectCmd.Args)
+	if output, err := connectCmd.CombinedOutput(); err != nil {
+		outputStr := string(output)
+		if strings.Contains(outputStr, "already connected") {
+			klog.Warningf("nvme connect: already connected to volume %s, continuing", volumeID)
+		} else {
+			klog.Errorf("failed to connect volume %s: %v, output: %s", volumeID, err, outputStr)
+			return nil, status.Errorf(codes.Internal, "nvme connect failed: %v", err)
+		}
 	}
 
 	// 2. Discover device path
@@ -287,43 +269,22 @@ func (ns *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubl
 
 func (ns *nodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
 	return &csi.NodeGetCapabilitiesResponse{}, nil
-}
+	//TODO-
+	/** AFTER STAGE WILL BE COMPLETED, CHANGE TO
 
-// must be idempotent
-//
-//nolint:cyclop // many cases in switch increases complexity
-func (ns *nodeServer) stageVolume(devicePath, stagingPath string, req *csi.NodeStageVolumeRequest) error {
-	mounted, err := ns.createMountPoint(stagingPath)
-	if err != nil {
-		return err
-	}
-	if mounted {
-		return nil
-	}
+		return &csi.NodeGetCapabilitiesResponse{
+		Capabilities: []*csi.NodeServiceCapability{
+			{
+				Type: &csi.NodeServiceCapability_Rpc{
+					Rpc: &csi.NodeServiceCapability_RPC{Add commentMore actions
+						Type: csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME,
+					},
+				},
+			},
+		},
+	}, nil
 
-	fsType := req.GetVolumeCapability().GetMount().GetFsType()
-	mntFlags := req.GetVolumeCapability().GetMount().GetMountFlags()
-
-	switch req.VolumeCapability.AccessMode.Mode {
-	case csi.VolumeCapability_AccessMode_SINGLE_NODE_READER_ONLY,
-		csi.VolumeCapability_AccessMode_MULTI_NODE_READER_ONLY:
-		mntFlags = append(mntFlags, "ro")
-	case csi.VolumeCapability_AccessMode_MULTI_NODE_MULTI_WRITER:
-		return errors.New("unsupported MULTI_NODE_MULTI_WRITER AccessMode")
-	case csi.VolumeCapability_AccessMode_MULTI_NODE_SINGLE_WRITER:
-	case csi.VolumeCapability_AccessMode_SINGLE_NODE_MULTI_WRITER:
-	case csi.VolumeCapability_AccessMode_SINGLE_NODE_SINGLE_WRITER:
-	case csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER:
-	case csi.VolumeCapability_AccessMode_UNKNOWN:
-	}
-
-	klog.Infof("mount %s to %s, fstype: %s, flags: %v", devicePath, stagingPath, fsType, mntFlags)
-	mounter := mount.SafeFormatAndMount{Interface: ns.mounter, Exec: exec.New()}
-	err = mounter.FormatAndMount(devicePath, stagingPath, fsType, mntFlags)
-	if err != nil {
-		return err
-	}
-	return nil
+	*/
 }
 
 // isStaged if stagingPath is a mount point, it means it is already staged, and vice versa
@@ -374,18 +335,6 @@ func (ns *nodeServer) deleteMountPoint(path string) error {
 		}
 	}
 	return os.RemoveAll(path)
-}
-
-func getStagingTargetPath(req interface{}) string {
-	switch vr := req.(type) {
-	case *csi.NodeStageVolumeRequest:
-		return vr.GetStagingTargetPath() + "/" + vr.GetVolumeId()
-	case *csi.NodeUnstageVolumeRequest:
-		return vr.GetStagingTargetPath() + "/" + vr.GetVolumeId()
-	case *csi.NodePublishVolumeRequest:
-		return vr.GetStagingTargetPath() + "/" + vr.GetVolumeId()
-	}
-	return ""
 }
 
 func (ns *nodeServer) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {

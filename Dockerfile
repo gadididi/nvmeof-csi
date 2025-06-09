@@ -24,13 +24,12 @@ COPY . .
 RUN go build -o nvmeof-csi ./cmd/
 
 # -------- Runtime Stage --------
-FROM debian:bookworm-slim
+FROM almalinux:9
 
-# Install nvme-cli and dependencies
-RUN apt-get update && \
-    apt-get install -y nvme-cli && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# Install nvme-cli
+RUN dnf install -y nvme-cli && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
 
 WORKDIR /
 

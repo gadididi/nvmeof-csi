@@ -28,18 +28,18 @@ import (
 	"k8s.io/klog"
 )
 
-// SpdkCsiInitiator defines interface for NVMeoF/iSCSI initiator
+// NvmeofCsiInitiator defines interface for NVMeoF/iSCSI initiator
 //   - Connect initiates target connection and returns local block device filename
 //     e.g., /dev/disk/by-id/nvme-SPDK_Controller1_SPDK00000000000001
 //   - Disconnect terminates target connection
 //   - Caller(node service) should serialize calls to same initiator
 //   - Implementation should be idempotent to duplicated requests
-type SpdkCsiInitiator interface {
+type NvmeofCsiInitiator interface {
 	Connect() (string, error)
 	Disconnect() error
 }
 
-func NewSpdkCsiInitiator(volumeContext map[string]string) (SpdkCsiInitiator, error) {
+func NewNvmeofCsiInitiator(volumeContext map[string]string) (NvmeofCsiInitiator, error) {
 	targetType := strings.ToLower(volumeContext["targetType"])
 	switch targetType {
 	case "rdma", "tcp":
@@ -50,12 +50,6 @@ func NewSpdkCsiInitiator(volumeContext map[string]string) (SpdkCsiInitiator, err
 			targetPort: volumeContext["targetPort"],
 			nqn:        volumeContext["nqn"],
 			model:      volumeContext["model"],
-		}, nil
-	case "iscsi":
-		return &initiatorISCSI{
-			targetAddr: volumeContext["targetAddr"],
-			targetPort: volumeContext["targetPort"],
-			iqn:        volumeContext["iqn"],
 		}, nil
 	default:
 		return nil, fmt.Errorf("unknown initiator: %s", targetType)
@@ -101,48 +95,6 @@ func (nvmf *initiatorNVMf) Disconnect() error {
 	}
 
 	deviceGlob := fmt.Sprintf("/dev/disk/by-id/*%s*", nvmf.model)
-	return waitForDeviceGone(deviceGlob)
-}
-
-type initiatorISCSI struct {
-	targetAddr string
-	targetPort string
-	iqn        string
-}
-
-func (iscsi *initiatorISCSI) Connect() (string, error) {
-	// iscsiadm -m discovery -t sendtargets -p ip:port
-	target := iscsi.targetAddr + ":" + iscsi.targetPort
-	cmdLine := []string{"iscsiadm", "-m", "discovery", "-t", "sendtargets", "-p", target}
-	err := execWithTimeout(cmdLine, 40)
-	if err != nil {
-		klog.Errorf("command %v failed: %s", cmdLine, err)
-	}
-	// iscsiadm -m node -T "iqn" -p ip:port --login
-	cmdLine = []string{"iscsiadm", "-m", "node", "-T", iscsi.iqn, "-p", target, "--login"}
-	err = execWithTimeout(cmdLine, 40)
-	if err != nil {
-		klog.Errorf("command %v failed: %s", cmdLine, err)
-	}
-
-	deviceGlob := fmt.Sprintf("/dev/disk/by-path/*%s*", iscsi.iqn)
-	devicePath, err := waitForDeviceReady(deviceGlob, 20)
-	if err != nil {
-		return "", err
-	}
-	return devicePath, nil
-}
-
-func (iscsi *initiatorISCSI) Disconnect() error {
-	target := iscsi.targetAddr + ":" + iscsi.targetPort
-	// iscsiadm -m node -T "iqn" -p ip:port --logout
-	cmdLine := []string{"iscsiadm", "-m", "node", "-T", iscsi.iqn, "-p", target, "--logout"}
-	err := execWithTimeout(cmdLine, 40)
-	if err != nil {
-		klog.Errorf("command %v failed: %s", cmdLine, err)
-	}
-
-	deviceGlob := fmt.Sprintf("/dev/disk/by-path/*%s*", iscsi.iqn)
 	return waitForDeviceGone(deviceGlob)
 }
 

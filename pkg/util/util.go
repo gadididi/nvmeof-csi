@@ -37,23 +37,6 @@ const (
 
 // classID, vendorID and deviceID and  which are used to detect QEMU KVM PCI-PCI bridge
 // detailed info: https://www.qemu.org/docs/master/specs/pci-ids.html#b36-vendor-id
-var KvmPciBridgeIDs = PciIDs{
-	ClassID:  "0x060400",
-	VendorID: "0x1b36",
-	DeviceID: "0x0001",
-}
-
-var kvmPciBridgeCount = len(findPciDevicesByPciIDs(KvmPciBridgeIDs))
-
-func IsKvm(pciIDs *PciIDs) bool {
-	if pciIDs != nil &&
-		pciIDs.VendorID == KvmPciBridgeIDs.VendorID &&
-		pciIDs.DeviceID == KvmPciBridgeIDs.DeviceID &&
-		pciIDs.ClassID == KvmPciBridgeIDs.ClassID {
-		return true
-	}
-	return false
-}
 
 func ParseJSONFile(fileName string, result interface{}) error {
 	file, err := os.Open(fileName)
@@ -232,148 +215,6 @@ func GetVirtioBlkDeviceName(bdf string, wait bool) (string, error) {
 	return waitForDeviceReady(deviceGlob, 20)
 }
 
-// look into the sys fs based on classID, vendorID and deviceID
-// and return bdfs
-func findPciDevicesByPciIDs(pciIDs PciIDs) (bdfs []string) {
-	pciDevicesPath := "/sys/bus/pci/devices"
-	files, err := os.ReadDir(pciDevicesPath)
-	if err != nil {
-		klog.Errorf("Error reading PCI devices directory: %v", err)
-		return nil
-	}
-
-	for _, file := range files {
-		devicePath := filepath.Join(pciDevicesPath, file.Name())
-
-		classData, err := os.ReadFile(filepath.Join(devicePath, "class"))
-		if err != nil {
-			klog.Errorf("Error reading class file: %v", err)
-			continue
-		}
-		vendorData, err := os.ReadFile(filepath.Join(devicePath, "vendor"))
-		if err != nil {
-			klog.Errorf("Error reading vendor file: %v", err)
-			continue
-		}
-		deviceData, err := os.ReadFile(filepath.Join(devicePath, "device"))
-		if err != nil {
-			klog.Errorf("Error reading device file: %v", err)
-			continue
-		}
-
-		if strings.TrimSpace(string(classData)) == pciIDs.ClassID &&
-			strings.TrimSpace(string(vendorData)) == pciIDs.VendorID &&
-			strings.TrimSpace(string(deviceData)) == pciIDs.DeviceID {
-			bdfs = append(bdfs, file.Name())
-		}
-	}
-
-	return bdfs
-}
-
-// getAvailableFunctionsKvm returns next available Pf and Vf when using kvm to emulate xPU hardware
-func getAvailableFunctionsKvm() (pe PciEndpoint, bdfs PciBdfs, err error) {
-	// obtain the number of kvm pci bridges
-	if kvmPciBridgeCount == 0 {
-		return pe, bdfs, fmt.Errorf("no valid kvm bridges")
-	}
-	klog.Infof("found %d kvm pci bridges ...", kvmPciBridgeCount)
-
-	pe.pfID = 0
-	pe.vfID = 0
-	bdfs.pfBdf = ""
-	bdfs.vfBdf = ""
-
-	var p, v uint32
-	for p = 1; p <= uint32(kvmPciBridgeCount); p++ {
-		for v = 0; v < 32; v++ { // Assumption is that each PCI bridge supports
-			devicePaths, err := filepath.Glob(fmt.Sprintf("/sys/bus/pci/devices/0000:%02x:%02x.*", p, v))
-			if err != nil {
-				return pe, bdfs, fmt.Errorf("sysfs failure: %w", err)
-			}
-			if devicePaths == nil {
-				// No matching NVMe files found in sysfs, hence use
-				// the first available pf/vf
-				pe.pfID = (p-1)*32 + v
-				bdfs.vfBdf = fmt.Sprintf("0000:%02x:%02x.0", p, v)
-				return pe, bdfs, nil
-			}
-		}
-	}
-	return pe, bdfs, os.ErrNotExist
-}
-
-// find all pci devices by IDs and then distinguish Pf and Vfs
-// "/sys/bus/pci/devices/$pfBdf" does not have sub-dir "physfn"
-// while "/sys/bus/pci/devices/$vfBdf" has.
-func getXpuPfBdfAndVfCount(pciIDs PciIDs) (pfBdf string, vfCount int) {
-	bdfs := findPciDevicesByPciIDs(pciIDs)
-
-	for _, bdf := range bdfs {
-		_, err := os.Stat(fmt.Sprintf("/sys/bus/pci/devices/%s/physfn", bdf))
-		if err != nil {
-			if os.IsNotExist(err) {
-				pfBdf = bdf
-			}
-		} else {
-			vfCount++
-		}
-	}
-
-	return pfBdf, vfCount
-}
-
-// GetAvailableFunctionsXpu returns next available Pf and Vf when using xPU hardware
-func getAvailableFunctionsXpu(pciIDs PciIDs) (pe PciEndpoint, bdfs PciBdfs, err error) {
-	pe.pfID = 0
-	pe.vfID = 0
-	bdfs.pfBdf = ""
-	bdfs.vfBdf = ""
-
-	var vfCount int
-	bdfs.pfBdf, vfCount = getXpuPfBdfAndVfCount(pciIDs)
-	vfBdfs := make(map[int]string)
-
-	for vf := 1; vf <= vfCount; vf++ {
-		vfBdfs[vf], err = os.Readlink(fmt.Sprintf("/sys/bus/pci/devices/%s/virtfn%d", bdfs.pfBdf, vf-1))
-		if err != nil {
-			return pe, bdfs, fmt.Errorf("sysfs failure: %w", err)
-		}
-
-		devicePaths, err := filepath.Glob(fmt.Sprintf("/sys/bus/pci/devices/%s/nvme", vfBdfs[vf][3:]))
-		if err != nil {
-			return pe, bdfs, fmt.Errorf("sysfs failure: %w", err)
-		}
-
-		if devicePaths == nil {
-			klog.Infof("vf is %d, vf_bdf is: %s", vf, vfBdfs[vf][3:])
-			pe.vfID = uint32(vf)
-			bdfs.vfBdf = vfBdfs[vf][3:]
-			return pe, bdfs, nil
-		}
-	}
-	return pe, bdfs, os.ErrNotExist
-}
-
-// GetAvailableFunctions returns next available Pf and Vf by checking
-// into sysfs for existing NVMe PCIe devices
-// Two cases will be included, using kvm to emulate xPU hardware, and xPU hardware.
-func GetAvailableFunctions(xpuConfig *XpuConfig) (pe PciEndpoint, bdfs PciBdfs, err error) {
-	if IsKvm(&xpuConfig.PciIDs) {
-		klog.Infof("getting available functions with KVM ...")
-		pe, bdfs, err = getAvailableFunctionsKvm()
-	} else {
-		klog.Infof("getting available functions with xPU hardware ...")
-		pe, bdfs, err = getAvailableFunctionsXpu(xpuConfig.PciIDs)
-	}
-	if err != nil {
-		klog.Errorf("fail to get available functions: %v", err)
-		return pe, bdfs, err
-	}
-	klog.Infof("Obtained available functions: pfID (%d), vfID (%d), pfBdf (%s), vfBdf (%s) ...", pe.pfID, pe.vfID, bdfs.pfBdf, bdfs.vfBdf)
-	return pe, bdfs, nil
-}
-
 func appendContentToFile(fileName, content string) error {
 	f, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o100)
 	if err != nil {
@@ -491,4 +332,22 @@ func LookupXPUContext(path string) (map[string]string, error) {
 // CleanUpXPUContext cleans up any stashed XPU context at passed in path.
 func CleanUpXPUContext(path string) error {
 	return cleanUpContext(path, xpuContextFileName)
+}
+
+// WriteStringToFile writes the given string to the specified file path.
+// It creates the file and necessary directories if they don't exist.
+func WriteStringToFile(path string, data string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(data), 0640)
+}
+
+func ReadStringFromFile(path string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
 }
