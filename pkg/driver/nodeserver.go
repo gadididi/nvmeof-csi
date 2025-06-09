@@ -175,6 +175,7 @@ func findDeviceByUUID(uuid string) (string, error) {
 			if err != nil {
 				continue
 			}
+			klog.Infof("Found NVMe device for UUID %s: %s", uuid, dev)
 			return dev, nil
 		}
 	}
@@ -201,11 +202,11 @@ func (ns *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishV
 	defer unlock()
 
 	// Extract NVMe-oF connection info
-	nqn := req.GetVolumeContext()["nqn"]
-	traddr := req.GetVolumeContext()["traddr"]
-	trsvcid := req.GetVolumeContext()["trsvcid"]
-	transport := req.GetVolumeContext()["transport"]
-	uuid := req.GetVolumeContext()["uuid"]
+	nqn := req.GetPublishContext()["nqn"]
+	traddr := req.GetPublishContext()["traddr"]
+	trsvcid := req.GetPublishContext()["trsvcid"]
+	transport := req.GetPublishContext()["transport"]
+	uuid := req.GetPublishContext()["uuid"]
 
 	if nqn == "" || traddr == "" || trsvcid == "" || transport == "" || uuid == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "missing NVMe connection parameters")

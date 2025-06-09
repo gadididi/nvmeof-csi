@@ -10,11 +10,14 @@ metadata:
   name: nvmeof-csi-provisioner-role
 rules:
 - apiGroups: [""]
-  resources: ["persistentvolumes", "persistentvolumeclaims", "secrets", "events", "nodes"]
+  resources: ["persistentvolumes", "persistentvolumeclaims", "secrets", "events", "nodes", "namespaces"]
   verbs: ["get", "list", "watch", "create", "delete", "update", "patch"]
 - apiGroups: ["storage.k8s.io"]
   resources: ["storageclasses", "csinodes", "volumeattachments"]
   verbs: ["get", "list", "watch", "create", "delete", "update", "patch"]
+- apiGroups: ["storage.k8s.io"]
+  resources: ["volumeattachments/status"]
+  verbs: ["patch", "update"]  
 - apiGroups: ["snapshot.storage.k8s.io"]
   resources: ["volumesnapshotclasses", "volumesnapshots", "volumesnapshotcontents", "volumesnapshotcontents/status"]
   verbs: ["get", "list", "watch", "update", "patch"]

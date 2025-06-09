@@ -133,10 +133,7 @@ func (cs *controllerServer) createVolume(req *csi.CreateVolumeRequest) (*csi.Vol
 	return vol, nil
 }
 
-func (cs *controllerServer) ControllerPublishVolume(
-	ctx context.Context,
-	req *csi.ControllerPublishVolumeRequest,
-) (*csi.ControllerPublishVolumeResponse, error) {
+func (cs *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
 	// Example: Call Gateway list_namespaces, find the one matching the VolumeId
 	// and send the UUID to the target node (e.g. via Node info in req)
 
@@ -176,6 +173,19 @@ func (cs *controllerServer) ControllerPublishVolume(
 	return &csi.ControllerPublishVolumeResponse{
 		PublishContext: publishContext,
 	}, nil
+}
+
+func (cs *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
+	volumeID := req.GetVolumeId()
+	if volumeID == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume ID is required")
+	}
+	// TODO: Add logic to ControllerUnpublishVolume the volume from your backend (e.g., via gRPC to Gateway)
+
+	// Log success
+	klog.Infof("ControllerUnpublishVolume: %s", volumeID)
+
+	return &csi.ControllerUnpublishVolumeResponse{}, nil
 }
 
 func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
