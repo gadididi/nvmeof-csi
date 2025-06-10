@@ -182,6 +182,7 @@ func (ns *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishV
 		return nil, status.Errorf(codes.Internal, "failed to create target mount point: %v", err)
 	}
 	// Bind-mount the block device to the target path
+	klog.Infof("Binding staging path %s to target path %s for volume %s", stagingTargetPath, targetPath, volumeID)
 	if err := ns.mounter.Mount(stagingTargetPath, targetPath, "", []string{"bind"}); err != nil {
 		return nil, status.Errorf(codes.Internal, "bind mount failed: %v", err)
 	}
@@ -257,12 +258,14 @@ func (ns *nodeServer) createMountPoint(path string) (bool, error) {
 		unmounted = true
 
 		dir := filepath.Dir(path)
+		klog.Infof("Creating mount point %s", dir)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return false, fmt.Errorf("failed to create parent dir for %s: %w", path, err)
 		}
 
 		// Create the file if it doesn't exist
 		if _, err := os.Stat(path); os.IsNotExist(err) {
+			klog.Infof("Creating block device target file %s", path)
 			file, err := os.OpenFile(path, os.O_CREATE, 0o600)
 			if err != nil {
 				return false, fmt.Errorf("failed to create block device target file %s: %w", path, err)
@@ -296,12 +299,14 @@ func (ns *nodeServer) deleteMountPoint(path string) error {
 	}
 
 	// Delete the block file
+	klog.Infof("Removing mount point file %s", path)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove mount point file %s: %w", path, err)
 	}
 
 	// Optionally remove parent dir if empty
 	dir := filepath.Dir(path)
+	klog.Infof("Removing parent directory %s if empty", dir)
 	if err := os.Remove(dir); err != nil && !os.IsNotExist(err) && !isDirNotEmpty(err) {
 		// If the directory is not empty, that's okay — skip silently
 		klog.Infof("Parent directory %s not empty, skipping delete", dir)
