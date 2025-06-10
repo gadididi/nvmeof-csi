@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
@@ -121,7 +122,7 @@ func (ns *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageV
 	unlock := ns.volumeLocks.Lock(volumeID)
 	defer unlock()
 
-	stagingTargetPath := req.GetStagingTargetPath()
+	stagingTargetPath := req.GetStagingTargetPath() + "/" + volumeID
 
 	isStaged, err := ns.isStaged(stagingTargetPath)
 	if err != nil {
@@ -155,10 +156,10 @@ func (ns *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageV
 		klog.Errorf("failed to disconnect initiator, volumeID: %s err: %v", volumeID, err)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	if err := util.CleanUpVolumeContext(stagingTargetPath); err != nil {
-		klog.Errorf("failed to clean up volume context, volumeID: %s err: %v", volumeID, err)
-		return nil, status.Error(codes.Internal, err.Error())
-	}
+	// if err := util.CleanUpVolumeContext(stagingTargetPath); err != nil {
+	// 	klog.Errorf("failed to clean up volume context, volumeID: %s err: %v", volumeID, err)
+	// 	return nil, status.Error(codes.Internal, err.Error())
+	// }
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
@@ -284,15 +285,34 @@ func (ns *nodeServer) deleteMountPoint(path string) error {
 		return nil
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to check mount point: %w", err)
 	}
+
 	if !unmounted {
-		err = ns.mounter.Unmount(path)
-		if err != nil {
-			return err
+		klog.Infof("Unmounting block device at %s", path)
+		if err := ns.mounter.Unmount(path); err != nil {
+			return fmt.Errorf("failed to unmount: %w", err)
 		}
 	}
-	return os.RemoveAll(path)
+
+	// Delete the block file
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove mount point file %s: %w", path, err)
+	}
+
+	// Optionally remove parent dir if empty
+	dir := filepath.Dir(path)
+	if err := os.Remove(dir); err != nil && !os.IsNotExist(err) && !isDirNotEmpty(err) {
+		// If the directory is not empty, that's okay — skip silently
+		klog.Infof("Parent directory %s not empty, skipping delete", dir)
+	}
+
+	return nil
+}
+
+// Helper to check if the error is "directory not empty"
+func isDirNotEmpty(err error) bool {
+	return strings.Contains(err.Error(), "directory not empty")
 }
 
 func (ns *nodeServer) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
