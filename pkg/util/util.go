@@ -32,7 +32,6 @@ import (
 
 const (
 	volumeContextFileName = "volume-context.json" // file name in which volume context is stashed.
-	xpuContextFileName    = "xpu-context.json"    // file name in which XPU context is stashed.
 )
 
 // classID, vendorID and deviceID and  which are used to detect QEMU KVM PCI-PCI bridge
@@ -248,6 +247,15 @@ func ConvertInterfaceToMap(data interface{}) (map[string]string, error) {
 	return strMap, nil
 }
 
+// checkDirExists checks directory  exists or not.
+func checkDirExists(p string) bool {
+	if _, err := os.Stat(p); os.IsNotExist(err) {
+		return false
+	}
+
+	return true
+}
+
 func stashContext(data interface{}, folder, fileName string) error {
 	encodedBytes, err := json.Marshal(data)
 	if err != nil {
@@ -312,42 +320,4 @@ func LookupVolumeContext(path string) (map[string]string, error) {
 // CleanUpVolumeContext cleans up any stashed volume context at passed in path.
 func CleanUpVolumeContext(path string) error {
 	return cleanUpContext(path, volumeContextFileName)
-}
-
-// StashXPUContext stashes XPU context into the volumeContextFileName at the passed in path, in
-// JSON format.
-func StashXPUContext(xpuContext map[string]string, path string) error {
-	return stashContext(xpuContext, path, xpuContextFileName)
-}
-
-// LookupXPUContext read and returns stashed XPU context at passed in path
-func LookupXPUContext(path string) (map[string]string, error) {
-	data, err := lookupContext(path, xpuContextFileName)
-	if err != nil {
-		return nil, err
-	}
-	return ConvertInterfaceToMap(data)
-}
-
-// CleanUpXPUContext cleans up any stashed XPU context at passed in path.
-func CleanUpXPUContext(path string) error {
-	return cleanUpContext(path, xpuContextFileName)
-}
-
-// WriteStringToFile writes the given string to the specified file path.
-// It creates the file and necessary directories if they don't exist.
-func WriteStringToFile(path string, data string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0750); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(data), 0640)
-}
-
-func ReadStringFromFile(path string) (string, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(content), nil
 }

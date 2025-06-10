@@ -20,9 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	osExec "os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
@@ -51,12 +49,33 @@ func newNodeServer(d *csicommon.CSIDriver) (*nodeServer, error) {
 	return ns, nil
 }
 
+// TODO - fix the function description
+// NodeStageVolume mounts the volume to a staging path on the node.
+// Implementation notes:
+// - stagingTargetPath is the directory passed in the request where the volume needs to be staged
+//   - We stage the volume into a file, named after the VolumeID inside stagingTargetPath if it is
+//     a block volume
+//   - Order of operation execution: (useful for defer stacking and when Unstaging to ensure steps
+//     are done in reverse, this is done in undoStagingTransaction)
+//   - Stash image metadata under staging path
+//   - Map the image (creates a device)
+//   - Create the staging file/directory under staging path
+//   - Stage the device (mount the device mapped for image)
 func (ns *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+
+	var err error
+	if err = util.ValidateNodeStageVolumeRequest(req); err != nil {
+		return nil, err
+	}
+
 	volumeID := req.GetVolumeId()
 	unlock := ns.volumeLocks.Lock(volumeID)
 	defer unlock()
 
-	stagingTargetPath := req.GetStagingTargetPath() // use this directory to persistently store VolumeContext
+	stagingParentPath := req.GetStagingTargetPath()
+	stagingTargetPath := stagingParentPath + "/" + volumeID // use this directory to persistently store VolumeContext
+
+	klog.Infof("NodeStageVolume called for volume %s, stagingTargetPath: %s", volumeID, stagingTargetPath)
 
 	isStaged, err := ns.isStaged(stagingTargetPath)
 	if err != nil {
@@ -70,7 +89,11 @@ func (ns *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolum
 
 	var initiator util.NvmeofCsiInitiator
 	initiator, err = util.NewNvmeofCsiInitiator(req.GetPublishContext()) //TODO - make NvmeofCsiInitiator works
+	if err != nil {
+		klog.Errorf("failed to create spdk initiator, volumeID: %s err: %v", volumeID, err)
+		return nil, status.Error(codes.Internal, err.Error())
 
+	}
 	devicePath, err := initiator.Connect() // idempotent
 	if err != nil {
 		klog.Errorf("failed to connect initiator, volumeID: %s err: %v", volumeID, err)
@@ -81,17 +104,15 @@ func (ns *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolum
 			initiator.Disconnect() //nolint:errcheck // ignore error
 		}
 	}()
-
-	if err := util.WriteStringToFile(filepath.Join(stagingTargetPath, "devicePath"), devicePath); err != nil {
-		klog.Warningf("could not stash device path: %v", err)
-	}
-	// stash VolumeContext to stagingTargetPath (useful during Unstage as it has no
-	// VolumeContext passed to the RPC as per the CSI spec)
-	err = util.StashVolumeContext(req.GetVolumeContext(), stagingTargetPath)
-	if err != nil {
-		klog.Errorf("failed to stash volume context, volumeID: %s err: %v", volumeID, err)
+	if err = ns.stageVolume(devicePath, stagingTargetPath); err != nil { // idempotent
+		klog.Errorf("failed to stage volume, volumeID: %s devicePath:%s err: %v", volumeID, devicePath, err)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+	// err = util.StashVolumeContext(req.GetVolumeContext(), stagingTargetPath) //- TODO - what to do with this?
+	// if err != nil {
+	// 	klog.Errorf("failed to stash volume context, volumeID: %s err: %v", volumeID, err)
+	// 	return nil, status.Error(codes.Internal, err.Error())
+	// }
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
@@ -141,117 +162,30 @@ func (ns *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageV
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
-func findDeviceByUUID(uuid string) (string, error) {
-	paths, err := filepath.Glob("/dev/disk/by-id/nvme-uuid.*")
-	if err != nil {
-		return "", err
-	}
-	for _, path := range paths {
-		if strings.Contains(path, uuid) {
-			dev, err := filepath.EvalSymlinks(path)
-			if err != nil {
-				continue
-			}
-			klog.Infof("Found NVMe device for UUID %s: %s", uuid, dev)
-			return dev, nil
-		}
-	}
-	return "", fmt.Errorf("device with UUID %s not found", uuid)
-}
-
-func createBlockFileIfNotExists(path string) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
-		if err != nil {
-			return fmt.Errorf("failed to create block file: %v", err)
-		}
-		defer f.Close()
-	}
-	return nil
-}
-
 func (ns *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
+	stagingTargetPath := filepath.Join(req.GetStagingTargetPath(), volumeID)
 	targetPath := req.GetTargetPath()
 
 	// Lock per volume
 	unlock := ns.volumeLocks.Lock(volumeID)
 	defer unlock()
 
-	// Extract NVMe-oF connection info
-	nqn := req.GetPublishContext()["nqn"]
-	traddr := req.GetPublishContext()["traddr"]
-	trsvcid := req.GetPublishContext()["trsvcid"]
-	transport := req.GetPublishContext()["transport"]
-	uuid := req.GetPublishContext()["uuid"]
-
-	if nqn == "" || traddr == "" || trsvcid == "" || transport == "" || uuid == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "missing NVMe connection parameters")
+	if req.GetVolumeCapability().GetBlock() == nil {
+		klog.Errorf("NodePublishVolume called with non-block volume capability, volumeID: %s", volumeID)
+		return nil, status.Errorf(codes.InvalidArgument, "only block volumes supported")
 	}
 
-	klog.Infof("Connecting volume %s via NVMe: nqn=%s, traddr=%s, trsvcid=%s, transport=%s",
-		volumeID, nqn, traddr, trsvcid, transport)
-
-	// --- INSERTED DISCOVERY COMMAND ---
-	discover_port := "8009"
-	discoverCmd := osExec.Command("nvme", "discover",
-		"-t", transport,
-		"-a", traddr,
-		"-s", discover_port)
-	klog.Infof("Running NVMe discovery: %v", discoverCmd.Args)
-	if output, err := discoverCmd.CombinedOutput(); err != nil {
-		klog.Errorf("nvme discover failed: %v, output: %s", err, string(output))
-		return nil, status.Errorf(codes.Internal, "nvme discover failed: %v", err)
+	// Create the target block file for bind-mount
+	if _, err := ns.createMountPoint(targetPath); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to create target mount point: %v", err)
 	}
-
-	// 1. Run `nvme connect`
-	connectCmd := osExec.Command("nvme", "connect-all",
-		"-t", transport,
-		//"-n", nqn,
-		"-a", traddr,
-		"-l", "1800")
-	klog.Infof("Connecting NVMe volume with command: %v", connectCmd.Args)
-	if output, err := connectCmd.CombinedOutput(); err != nil {
-		outputStr := string(output)
-		if strings.Contains(outputStr, "already connected") {
-			klog.Warningf("nvme connect: already connected to volume %s, continuing", volumeID)
-		} else {
-			klog.Errorf("failed to connect volume %s: %v, output: %s", volumeID, err, outputStr)
-			return nil, status.Errorf(codes.Internal, "nvme connect failed: %v", err)
-		}
+	// Bind-mount the block device to the target path
+	if err := ns.mounter.Mount(stagingTargetPath, targetPath, "", []string{"bind"}); err != nil {
+		return nil, status.Errorf(codes.Internal, "bind mount failed: %v", err)
 	}
-
-	// 2. Discover device path
-	devicePath, err := findDeviceByUUID(uuid)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find NVMe device for NQN %s: %v", uuid, err)
-	}
-
-	// 3. If block mode, create a bind mount (raw block usage)
-	if req.GetVolumeCapability().GetBlock() != nil {
-
-		// Ensure parent directory of targetPath exists
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
-			return nil, fmt.Errorf("failed to create target path parent dir: %v", err)
-		}
-
-		// Ensure the target file exists
-		if err := createBlockFileIfNotExists(targetPath); err != nil {
-			return nil, err
-		}
-		// Bind-mount the block device to the target path
-		if err := ns.mounter.Mount(devicePath, targetPath, "", []string{"bind"}); err != nil {
-			return nil, status.Errorf(codes.Internal, "bind mount failed: %v", err)
-		}
-		return &csi.NodePublishVolumeResponse{}, nil
-	}
-
-	// 4. If mount mode: just expose the device, no mount
-	klog.Infof("Skipping mount for volume %s: device %s available", volumeID, devicePath)
 	return &csi.NodePublishVolumeResponse{}, nil
 
-	// klog.Infof("Successfully connected volume %s", volumeID)
-	// return &csi.NodePublishVolumeResponse{}, nil
 }
 
 func (ns *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
@@ -268,15 +202,14 @@ func (ns *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubl
 }
 
 func (ns *nodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
-	return &csi.NodeGetCapabilitiesResponse{}, nil
-	//TODO-
-	/** AFTER STAGE WILL BE COMPLETED, CHANGE TO
+	//return &csi.NodeGetCapabilitiesResponse{}, nil
 
-		return &csi.NodeGetCapabilitiesResponse{
+	//TODO-AFTER STAGE WILL BE COMPLETED, CHANGE TO
+	return &csi.NodeGetCapabilitiesResponse{
 		Capabilities: []*csi.NodeServiceCapability{
 			{
 				Type: &csi.NodeServiceCapability_Rpc{
-					Rpc: &csi.NodeServiceCapability_RPC{Add commentMore actions
+					Rpc: &csi.NodeServiceCapability_RPC{
 						Type: csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME,
 					},
 				},
@@ -284,7 +217,23 @@ func (ns *nodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapab
 		},
 	}, nil
 
-	*/
+}
+
+func (ns *nodeServer) stageVolume(devicePath, stagingPath string) error {
+	mounted, err := ns.createMountPoint(stagingPath)
+	if err != nil {
+		return err
+	}
+	if mounted {
+		return nil
+	}
+
+	klog.Infof("Bind mounting block device %s to staging path %s", devicePath, stagingPath)
+	err = ns.mounter.Mount(devicePath, stagingPath, "", []string{"bind"})
+	if err != nil {
+		return fmt.Errorf("failed to bind mount block device: %w", err)
+	}
+	return nil
 }
 
 // isStaged if stagingPath is a mount point, it means it is already staged, and vice versa
@@ -300,17 +249,26 @@ func (ns *nodeServer) isStaged(stagingPath string) (bool, error) {
 	return !unmounted, nil
 }
 
-// must be idempotent
-// func (ns *nodeServer) publishVolume(stagingPath string, req *csi.NodePublishVolumeRequest) error {
-
-// }
-
 // create mount point if not exists, return whether already mounted
 func (ns *nodeServer) createMountPoint(path string) (bool, error) {
 	unmounted, err := mount.IsNotMountPoint(ns.mounter, path)
 	if os.IsNotExist(err) {
 		unmounted = true
-		err = os.MkdirAll(path, 0o755)
+
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return false, fmt.Errorf("failed to create parent dir for %s: %w", path, err)
+		}
+
+		// Create the file if it doesn't exist
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			file, err := os.OpenFile(path, os.O_CREATE, 0o600)
+			if err != nil {
+				return false, fmt.Errorf("failed to create block device target file %s: %w", path, err)
+			}
+			file.Close()
+		}
+		err = nil // reset IsNotExist
 	}
 	if !unmounted {
 		klog.Infof("%s already mounted", path)

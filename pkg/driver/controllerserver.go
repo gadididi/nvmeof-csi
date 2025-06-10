@@ -101,7 +101,7 @@ func (cs *controllerServer) createVolume(req *csi.CreateVolumeRequest) (*csi.Vol
 
 	// Construct and return CSI volume
 	vol := &csi.Volume{
-		VolumeId:      "nqn.2016-06.io.spdk:cnode1.mygroup1",
+		VolumeId:      "nqn.2016-06.io.spdk:cnode1.mygroup1", //TODO - change it maybe to resp.GetNsid() or similar ??
 		CapacityBytes: size,
 		//VolumeContext: req.GetParameters(),
 		VolumeContext: map[string]string{

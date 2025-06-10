@@ -54,7 +54,7 @@ func TestExecWithTimeoutTimeout(t *testing.T) {
 
 func runExecWithTimeout(cmdLine []string, timeout int) (int, error) {
 	start := time.Now()
-	err := execWithTimeout(cmdLine, timeout)
+	_, err := execWithTimeout(cmdLine, timeout)
 	elapsed := int(time.Since(start) / time.Second)
 	return elapsed, err
 }

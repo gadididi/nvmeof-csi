@@ -39,21 +39,22 @@ type NvmeofCsiInitiator interface {
 	Disconnect() error
 }
 
-func NewNvmeofCsiInitiator(volumeContext map[string]string) (NvmeofCsiInitiator, error) {
-	targetType := strings.ToLower(volumeContext["targetType"])
-	switch targetType {
-	case "rdma", "tcp":
-		return &initiatorNVMf{
-			// see util/nvmf.go VolumeInfo()
-			targetType: volumeContext["targetType"],
-			targetAddr: volumeContext["targetAddr"],
-			targetPort: volumeContext["targetPort"],
-			nqn:        volumeContext["nqn"],
-			model:      volumeContext["model"],
-		}, nil
-	default:
-		return nil, fmt.Errorf("unknown initiator: %s", targetType)
+func NewNvmeofCsiInitiator(publishContext map[string]string) (NvmeofCsiInitiator, error) {
+	if publishContext == nil {
+		return nil, fmt.Errorf("publishContext is nil")
 	}
+	if publishContext["transport"] == "" || publishContext["traddr"] == "" ||
+		publishContext["trsvcid"] == "" || publishContext["nqn"] == "" || publishContext["uuid"] == "" {
+		return nil, fmt.Errorf("publishContext missing required fields: %v", publishContext)
+	}
+	return &initiatorNVMf{
+		// see util/nvmf.go VolumeInfo()
+		targetType: publishContext["transport"],
+		targetAddr: publishContext["traddr"],
+		targetPort: publishContext["trsvcid"],
+		nqn:        publishContext["nqn"],
+		uuid:       publishContext["uuid"],
+	}, nil
 }
 
 // NVMf initiator implementation
@@ -62,22 +63,26 @@ type initiatorNVMf struct {
 	targetAddr string
 	targetPort string
 	nqn        string
-	model      string
+	uuid       string
 }
 
 func (nvmf *initiatorNVMf) Connect() (string, error) {
-	// nvme connect -t tcp -a 192.168.1.100 -s 4420 -n "nqn"
 	cmdLine := []string{
-		"nvme", "connect", "-t", strings.ToLower(nvmf.targetType),
-		"-a", nvmf.targetAddr, "-s", nvmf.targetPort, "-n", nvmf.nqn,
+		"nvme", "connect-all", "-t", strings.ToLower(nvmf.targetType),
+		"-a", nvmf.targetAddr, "-q", nvmf.nqn, "-l", "1800",
 	}
-	err := execWithTimeout(cmdLine, 40)
+	output, err := execWithTimeout(cmdLine, 40)
+
 	if err != nil {
-		// go on checking device status in case caused by duplicated request
-		klog.Errorf("command %v failed: %s", cmdLine, err)
+		if strings.Contains(output, "already connected") {
+			klog.Warningf("nvme connect: already connected to volume %s, continuing", nvmf.nqn)
+		} else {
+			klog.Errorf("command %v failed: %s", cmdLine, err)
+
+		}
 	}
 
-	deviceGlob := fmt.Sprintf("/dev/disk/by-id/*%s*", nvmf.model)
+	deviceGlob := fmt.Sprintf("/dev/disk/by-id/nvme-uuid.*%s*", nvmf.uuid)
 	devicePath, err := waitForDeviceReady(deviceGlob, 20)
 	if err != nil {
 		return "", err
@@ -88,13 +93,13 @@ func (nvmf *initiatorNVMf) Connect() (string, error) {
 func (nvmf *initiatorNVMf) Disconnect() error {
 	// nvme disconnect -n "nqn"
 	cmdLine := []string{"nvme", "disconnect", "-n", nvmf.nqn}
-	err := execWithTimeout(cmdLine, 40)
+	_, err := execWithTimeout(cmdLine, 40)
 	if err != nil {
 		// go on checking device status in case caused by duplicate request
 		klog.Errorf("command %v failed: %s", cmdLine, err)
 	}
 
-	deviceGlob := fmt.Sprintf("/dev/disk/by-id/*%s*", nvmf.model)
+	deviceGlob := fmt.Sprintf("/dev/disk/by-id/nvme-uuid.*%s*", nvmf.uuid)
 	return waitForDeviceGone(deviceGlob)
 }
 
@@ -131,7 +136,7 @@ func waitForDeviceGone(deviceGlob string) error {
 }
 
 // exec shell command with timeout(in seconds)
-func execWithTimeout(cmdLine []string, timeout int) error {
+func execWithTimeout(cmdLine []string, timeout int) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
 
@@ -139,12 +144,12 @@ func execWithTimeout(cmdLine []string, timeout int) error {
 	//nolint:gosec // execWithTimeout assumes valid cmd arguments
 	cmd := exec.CommandContext(ctx, cmdLine[0], cmdLine[1:]...)
 	output, err := cmd.CombinedOutput()
-
+	outputStr := string(output)
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return fmt.Errorf("timed out")
+		return outputStr, fmt.Errorf("timed out")
 	}
 	if output != nil {
 		klog.Infof("command returned: %s", output)
 	}
-	return err
+	return outputStr, err
 }
