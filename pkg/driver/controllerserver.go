@@ -19,6 +19,8 @@ package driver
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -80,9 +82,9 @@ func (cs *controllerServer) createVolume(req *csi.CreateVolumeRequest) (*csi.Vol
 
 	// Build namespace_add_req
 	nsReq := &gatewaypb.NamespaceAddReq{
-		RbdPoolName:       "mypool", // adjust as needed
+		RbdPoolName:       req.GetParameters()["RbdPoolName"],
 		RbdImageName:      req.GetName(),
-		SubsystemNqn:      "nqn.2016-06.io.spdk:cnode1.mygroup1", // adjust if needed
+		SubsystemNqn:      req.GetParameters()["SubsystemNqn"],
 		BlockSize:         4096,
 		CreateImage:       proto.Bool(true),
 		Size:              proto.Uint64(uint64(size)),
@@ -101,15 +103,14 @@ func (cs *controllerServer) createVolume(req *csi.CreateVolumeRequest) (*csi.Vol
 
 	// Construct and return CSI volume
 	vol := &csi.Volume{
-		VolumeId:      "nqn.2016-06.io.spdk:cnode1.mygroup1", //TODO - change it maybe to resp.GetNsid() or similar ??
+		VolumeId:      fmt.Sprintf("nsid-%d", resp.GetNsid()),
 		CapacityBytes: size,
-		//VolumeContext: req.GetParameters(),
 		VolumeContext: map[string]string{
 			"nqn":       nsReq.SubsystemNqn,
-			"traddr":    "10.242.64.32", // Replace with real target IP or use resp.GetTraddr()
-			"trsvcid":   "4420",         // Standard NVMe-oF port, or use from response
-			"transport": "tcp",          // Or "rdma" if you're using it
-			"image":     req.GetName(),  // add this!
+			"traddr":    req.GetParameters()["traddr"],
+			"trsvcid":   req.GetParameters()["trsvcid"],
+			"transport": req.GetParameters()["transport"],
+			"image":     nsReq.RbdImageName,
 		},
 		ContentSource: req.GetVolumeContentSource(),
 	}
@@ -143,8 +144,8 @@ func (cs *controllerServer) ControllerPublishVolume(ctx context.Context, req *cs
 
 	klog.Infof("Publishing volume %s to node %s", req.VolumeId, req.NodeId)
 
-	nsListReq := &gatewaypb.ListNamespacesReq{
-		Subsystem: req.VolumeId, // same as used in VolumeId
+	nsListReq := &gatewaypb.ListNamespacesReq{ //TODO - maybe i can create by Nsid and not Nqn
+		Subsystem: req.VolumeContext["nqn"],
 	}
 
 	nsListResp, err := cs.gatewayClient.ListNamespaces(ctx, nsListReq)
@@ -168,7 +169,7 @@ func (cs *controllerServer) ControllerPublishVolume(ctx context.Context, req *cs
 	// You could now "notify" the node, or embed the UUID in context for NodePublishVolume
 	publishContext := map[string]string{
 		"uuid":      targetUUID,
-		"nqn":       req.VolumeId,
+		"nqn":       req.VolumeContext["nqn"],
 		"traddr":    req.VolumeContext["traddr"],
 		"trsvcid":   req.VolumeContext["trsvcid"],
 		"transport": req.VolumeContext["transport"],
@@ -194,15 +195,39 @@ func (cs *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *
 
 func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
+	unlock := cs.volumeLocks.Lock(volumeID)
+	defer unlock()
+
 	if volumeID == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume ID is required")
 	}
 
-	// TODO: Add logic to delete the volume from your backend (e.g., via gRPC to Gateway)
+	if !strings.HasPrefix(volumeID, "nsid-") {
+		return nil, status.Error(codes.InvalidArgument, "invalid volumeID format")
+	}
+	klog.Infof("Deleting volume: %s", volumeID)
 
-	// Log success
-	klog.Infof("Deleted volume: %s", volumeID)
+	nsidStr := strings.TrimPrefix(volumeID, "nsid-")
+	nsidUint, err := strconv.ParseUint(nsidStr, 10, 32)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid NSID: %v", err)
+	}
+	nsid := uint32(nsidUint)
 
+	nsDelReq := &gatewaypb.NamespaceDeleteReq{
+		Nsid: nsid,
+	}
+	gwCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := cs.gatewayClient.NamespaceDelete(gwCtx, nsDelReq)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "gateway NamespaceRemove failed: %v", err)
+	}
+	if resp.GetStatus() != 0 {
+		return nil, status.Errorf(codes.Internal, "gateway returned error: %s", resp.GetErrorMessage())
+	}
+
+	klog.Infof("Volume deleted successfully: %s", volumeID)
 	return &csi.DeleteVolumeResponse{}, nil
 }
 

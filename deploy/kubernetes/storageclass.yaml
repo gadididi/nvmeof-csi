@@ -9,5 +9,10 @@ metadata:
 provisioner: csi.nvmeof.io
 parameters:
   fsType: ext4
+  RbdPoolName: "mypool"
+  SubsystemNqn: "nqn.2016-06.io.spdk:cnode1.mygroup1"
+  traddr: "10.242.64.32"
+  trsvcid: "4420"
+  transport: "tcp"
 reclaimPolicy: Delete
 volumeBindingMode: Immediate
