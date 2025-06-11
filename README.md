@@ -24,9 +24,9 @@ Status: **Beta**
 
 NVMeoF-CSI is currently developed and tested with `Go 1.24`, `Docker 28.2` and `Kubernetes 1.25.0` on `CentOS Stream 9`.
 
-Before deploying the NVMeoF CSI driver, ensure that your storage backend has an NVMe over Fabrics subsystem installed and reachable from your Kubernetes nodes. Follow this guide to install and configure NVMeoF:
+Before deploying the NVMeoF CSI driver, ensure that your storage backend has an NVMe over Fabrics subsystem installed (inside Ceph cluster) and reachable from your Kubernetes nodes. Follow this guide to install and configure NVMeoF:
 
-* [NVMe-oF Setup Guide (nvme-cli)](https://linux-nvme.github.io/nvme-cli/nvme-cli.html#nvmeof)
+* [NVMe-oF Setup Guide (nvme-cli)](https://docs.ceph.com/en/latest/rbd/nvmeof-target-configure/)
 
 ## Setup
 
