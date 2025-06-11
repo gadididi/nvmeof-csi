@@ -1,19 +1,17 @@
-# SPDK CSI
+# NVMeoF CSI
 
 ## About
 
-This repo contains SPDK CSI ([Container Storage Interface](https://github.com/container-storage-interface/))
-plugin for Kubernetes.
+This repo contains a CSI ([Container Storage Interface](https://github.com/container-storage-interface/)) plugin for Kubernetes, designed to provision and manage NVMe over Fabrics (NVMeoF) volumes.
 
-SPDK CSI plugin brings SPDK to Kubernetes. It provisions SPDK logical volumes on storage node dynamically
-and enables Pods to access SPDK storage backend through NVMe-oF or iSCSI.
+It dynamically provisions NVMe namespaces on the storage backend and exposes them to Kubernetes workloads using NVMeoF.
 
-Please see [SPDK CSI Design Document](https://docs.google.com/document/d/1aLi6SkNBp__wjG7YkrZu7DdhoftAquZiWiIOMy3hskY/)
+Please see [NvmeOF](https://github.com/ceph/ceph-nvmeof)
 for detailed introduction.
 
 ## Supported platforms
 
-This plugin conforms to [CSI Spec v1.7.0](https://github.com/container-storage-interface/spec/blob/v1.7.0/spec.md).
+This plugin conforms to [CSI Spec v1.11.0](https://github.com/container-storage-interface/spec/blob/v1.11.0/spec.md).
 It is currently developed and tested only on Kubernetes.
 
 This plugin supports `x86_64` and `Arm64` architectures.
@@ -24,298 +22,173 @@ Status: **Beta**
 
 ## Prerequisites
 
-SPDK-CSI is currently developed and tested with `Go 1.19`, `Docker 20.10` and `Kubernetes 1.25.0` on `Ubuntu 22.04`.
+NVMeoF-CSI is currently developed and tested with `Go 1.24`, `Docker 28.2` and `Kubernetes 1.25.0` on `CentOS Stream 9`.
 
-Minimal requirement: Go 1.19+, Docker 18.03+ and Kubernetes 1.20+.
+Before deploying the NVMeoF CSI driver, ensure that your storage backend has an NVMe over Fabrics subsystem installed and reachable from your Kubernetes nodes. Follow this guide to install and configure NVMeoF:
+
+* [NVMe-oF Setup Guide (nvme-cli)](https://linux-nvme.github.io/nvme-cli/nvme-cli.html#nvmeof)
 
 ## Setup
 
 ### Build
 
-- `$ make all`
+Compile the Go-based CSI driver binary and build/push its container image:
 
-Build targets spdkcsi, lint, test.
+```bash
+# Build the CSI driver binary
+$ make all
 
-- `$ make spdkcsi`
-
-Build SPDK-CSI binary `_out/spdkcsi`.
-
-- `$ make lint`
-
-Lint code and scripts.
-
-- `$ make golangci`
-
-Install [golangci-lint](https://github.com/golangci/golangci-lint) and perform various go code static checks.
-
-- `$ make yamllint`
-
-Lint yaml files if yamllint is installed. Requires yamllint 1.10+.
-
-- `$ make test`
-
-Verify go modules and run unit tests. Requires SPDK target and JsonRPC HTTP proxy running on localhost.
-See [deploy/spdk/README](deploy/spdk/README.md) for details.
-
-- `$ make e2e-test`
-
-Verify core features through Kubernetes end-to-end (e2e) test.
-
-- `$ make image`
-
-Build SPDK-CSI docker image.
-
-### Parameters
-
-`spdkcsi` executable accepts several command line parameters.
-
-| Parameter      | Type   | Description               | Default           |
-| ---------      | ----   | -----------               | -------           |
-| `--controller` | -      | enable controller service | -                 |
-| `--node`       | -      | enable node service       | -                 |
-| `--endpoint`   | string | communicate with sidecars | /tmp/spdkcsi.sock |
-| `--drivername` | string | driver name               | csi.spdk.io       |
-| `--nodeid`     | string | node id                   | -                 |
+# Build and push the Docker image to your registry
+$ docker build -t quay.io/your-org/nvmeof-csi:latest .
+$ docker push quay.io/your-org/nvmeof-csi:latest
+```
 
 ## Usage
 
 Example deployment files can be found in deploy/kubernetes directory.
 
-| File Name            | Usage                                      |
-| -------------------- | -----                                      |
-| storageclass.yaml    | StorageClass of provisioner "csi.spdk.io"  |
-| controller.yaml      | StatefulSet running CSI Controller service |
-| node.yaml            | DaemonSet running CSI Node service         |
-| controller-rbac.yaml | Access control for CSI Controller service  |
-| node-rbac.yaml       | Access control for CSI Node service        |
-| config-map.yaml      | SPDK storage cluster configurations        |
-| secret.yaml          | SPDK storage cluster access tokens         |
-| snapshotclass.yaml   | SnapshotClass of provisioner "csi.spdk.io" |
-| driver.yaml          | CSIDriver object                           |
+| File                   | Purpose                                   |
+| ---------------------- | ----------------------------------------- |
+| `storageclass.yaml`    | StorageClass for the NVMeoF CSI driver    |
+| `controller.yaml`      | StatefulSet for CSI Controller service    |
+| `node.yaml`            | DaemonSet for CSI Node service            |
+| `controller-rbac.yaml` | RBAC for CSI Controller                   |
+| `node-rbac.yaml`       | RBAC for CSI Node                         |
+| `config-map.yaml`      | NVMeoF backend configuration              |
+| `secret.yaml`          | Access credentials                        |
+| `driver.yaml`          | CSIDriver object                          |
+| `testpod.yaml`         | Example Pod + PVC to verify functionality |
 
 ---
-**_NOTE:_**
+### Deploy
 
-Below example is a simplest test system running in a single host or VM. No NVMe device is required, memory based bdev
-is used instead. [docs/multi-node.md](docs/multi-node.md) introduces how to deploy SPDKCSI on multiple nodes with NVMe
-devices.
+1. **Start your Kubernetes cluster** (e.g., via Minikube):
+
+   ```bash
+   cd scripts
+   sudo ./minikube.sh up
+   sudo ln -sf /var/lib/minikube/binaries/v1.25.0/kubectl /usr/local/bin/kubectl
+   ```
+
+2. **Deploy CSI services**:
+
+   ```bash
+   cd deploy/kubernetes
+   ./deploy.sh
+   kubectl get pods
+   ```
+
+3. **Run a test workload**:
+
+   ```bash
+   kubectl apply -f testpod.yaml
+
+   # Verify PersistentVolumes and Claims
+   kubectl get pv
+   kubectl get pvc
+
+   # Verify the test pod
+   kubectl get pods
+
+   # Check the NVMe-oF volume mount inside the pod
+   kubectl exec spdkcsi-test -- mount | grep nvme
+   ```
+
+## Teardown
+
+Clean up the test resources and cluster:
+
+```bash
+# Delete test workload
+kubectl delete -f deploy/kubernetes/testpod.yaml
+
+# Tear down CSI services
+cd deploy/kubernetes
+./deploy.sh teardown
+
+# Clean up Kubernetes cluster
+cd scripts
+sudo ./minikube.sh clean
+```
 
 ---
 
-### Prepare SPDK storage node
+## Architecture & Flow
 
-Follow [deploy/spdk/README](deploy/spdk/README.md) to deploy SPDK storage service on localhost.
+Below are two detailed ASCII diagrams showing:
 
-### Deploy SPDKCSI services
+1. **Controller Side** – how `kube-controller-manager` calls your CSI Controller, which in turn talks to the NVMe-oF Gateway.
+2. **Node Side** – how `kubelet` interacts with your CSI Node to perform attach/mount operations.
 
-1. Launch Minikube test cluster.
-  ```bash
-    $ cd scripts
-    $ sudo ./minikube.sh up
+### 1. Controller & NVMe-oF Gateway
 
-    # Create kubectl shortcut (assume kubectl version 1.25.0)
-    $ sudo ln -s /var/lib/minikube/binaries/v1.25.0/kubectl /usr/local/bin/kubectl
-
-    # Wait for Kubernetes ready
-    $ kubectl get pods --all-namespaces
-    NAMESPACE     NAME                          READY   STATUS    RESTARTS   AGE
-    kube-system   coredns-6955765f44-dlb88      1/1     Running   0          81s
-    ......                                              ......
-    kube-system   kube-apiserver-spdkcsi-dev    1/1     Running   0          67s
-    ......                                              ......
-  ```
-
-2. Install snapshot controller and CRD
-
-  ```bash
-    # The snapshot controller functions with all CSI drivers in a cluster.
-    # Hence, you can skip it if your kubernetes cluster already has a snapshot controller.
-    SNAPSHOT_VERSION="v6.2.2" ./scripts/install-snapshot.sh install
-
-    # Check status
-    $ kubectl get pod snapshot-controller-0
-    NAME                    READY   STATUS    RESTARTS   AGE
-    snapshot-controller-0   1/1     Running   0          6m14s
-  ```
-
-3. Deploy SPDK-CSI services
-  ```bash
-    $ cd deploy/kubernetes
-    $ ./deploy.sh
-
-    # Check status
-    $ kubectl get pods
-    NAME                   READY   STATUS    RESTARTS   AGE
-    spdkcsi-controller-0   3/3     Running   0          3m16s
-    spdkcsi-node-lzvg5     2/2     Running   0          3m16s
-  ```
-
-4. Deploy test pod
-  ```bash
-    $ cd deploy/kubernetes
-    $ kubectl apply -f testpod.yaml
-
-    # Check status
-    $ kubectl get pv
-    NAME                       CAPACITY   ...    STORAGECLASS   REASON   AGE
-    persistentvolume/pvc-...   256Mi      ...    spdkcsi-sc              43s
-
-    $ kubectl get pvc
-    NAME                                ...   CAPACITY   ACCESS MODES   STORAGECLASS   AGE
-    persistentvolumeclaim/spdkcsi-pvc   ...   256Mi      RWO            spdkcsi-sc     44s
-
-    $ kubectl get pods
-    NAME                   READY   STATUS    RESTARTS   AGE
-    spdkcsi-test           1/1     Running   0          1m31s
-
-    # Check attached spdk volume in test pod
-    $ kubectl exec spdkcsi-test mount | grep spdkcsi
-    /dev/disk/by-id/nvme-..._spdkcsi-sn on /spdkvol type ext4 (rw,relatime)
-  ```
-
-5. Deploy PVC snapshot
-  ```bash
-    # Create snapshot of the bound PVC
-    $ cd deploy/kubernetes
-    $ kubectl apply -f snapshot.yaml
-
-    # Get details about the snapshot
-    $ kubectl get volumesnapshot spdk-snapshot
-    NAME            READYTOUSE   SOURCEPVC   ... SNAPSHOTCLASS         AGE
-    spdk-snapshot   false        spdkcsi-pvc ... csi-spdk-snapclass    29s
-
-    # Get details about the volumesnapshotcontent
-    kubectl get volumesnapshotcontent
-    $ kubectl get volumesnapshotcontent
-    NAME        ...   READYTOUSE   RESTORESIZE   DELETIONPOLICY   DRIVER        VOLUMESNAPSHOTCLASS   VOLUMESNAPSHOT   AGE
-    snapcontent-...   true         268435456     Delete           csi.spdk.io   csi-spdk-snapclass    spdk-snapshot    29s
-  ```
-
-### Teardown
-
-1. Delete PVC snapshot
-  ```bash
-    cd deploy/kubernetes
-    kubectl delete -f snapshot.yaml
-  ```
-
-2. Delete test pod
-  ```bash
-    $ cd deploy/kubernetes
-    $ kubectl delete -f testpod.yaml
-  ```
-
-3. Delete SPDK-CSI services
-  ```bash
-    $ cd deploy/kubernetes
-    $ ./deploy.sh teardown
-  ```
-
-4. Delete snapshot controller and CRD
-  ```bash
-  SNAPSHOT_VERSION="v6.2.2" ./scripts/install-snapshot.sh cleanup
-  ```
-
-5. Teardown Kubernetes test cluster
-  ```bash
-    $ cd scripts
-    $ sudo ./minikube.sh clean
-  ```
-
-## xPU
-
-An Infrastructure Processing Unit (IPU), commonly referred to xPU in subsequent terminologies, is an accelerator
-that is attached to the PCIe bus. It communicates with a storage server through its own network interface in reality,
-which will help offload storage-related network traffic from local CPU cores and network interfaces.
-
-Currently, two backends are supported for xPU: Storage Management Agent (SMA) and Open Programmable Infrastructure (OPI).
-
-From the host's point of view, the xPU will look like a hot-pluggable local storage device. For both SMA and OPI, the xPU
-needs to receive remote storage information to enable it to connect to the remote target. This information is shared with
-the CSI node driver via CSI volume parameters that were set at the volume creation time by the CSI controller driver.
-The CSI node driver passes the remote storage information to xPU. For SMA, there will be a SMA gRPC server on the xPU node.
-For OPI, there will be a OPI-SPDK-Bridge gRPC server on the xPU node. They will be able to receive these configurations in
-a standard way (protobufs + gRPC).
-
-The diagram below provides a high-level view of the architecture:
 ```
-        [Kubernetes nodes]    |    [SPDK storage nodes]
-                              |
-        +---[K8S-Pod]----+    |    +---[xPU-Node]---+
-        |--CSI-Node-Pod--|    |    |---Controller---|
-        |                |    |    |                |
-        | spdk-csi       |    |    |                |
-        | node driver---->--------->-SMA/OPI->-spdk->---+
-        +----------------+    |    |                |   |
-                              |    +----------------+   |
-        +---[K8S-Pod]----+    |                         |
-        |-CSI-Controller-|    |    +-[Storage-Node]-+   |
-        |                |    |    |-----Target-----|   |
-        | spdk-csi       |    |    |                |   |
-        | driver         |    |    |                |   |
-        | controller----->--------->---->-spdk-<----<---+
-        |                |    |    |                |
-        +----------------+    |    +----------------+
++--------------------------------------------------+
+| Kubernetes Control Plane                         |
+|  +--------------------------------------------+  |
+|  | CSI Controller Deployment (nvmeofcsi)     |  |
+|  |  • CreateVolume()                         |  |
+|  |  • DeleteVolume()                         |  |
+|  |  • ControllerPublishVolume()              |  |
+|  +--------------------------------------------+  |
++--------------------------------------------------+
+                   │
+         CSI gRPC  │                         NVMe-oF Gateway SDK/gRPC
+  (drivername=csi.nvmeof.io)           (e.g. management IP:5500)
+                   ▼
++--------------------------------------------------+
+| NVMe-oF Gateway gRPC Server                      |
+|  • NamespaceAdd(volumeName, size, parameters)    |
+|  • NamespaceDel(namespaceID)                     |
+|  • ListSubsystems(), ListNamespaces()            |
++--------------------------------------------------+
 ```
 
-### Usage for xPU
+**Flow**:
 
-The CSI-Node-Pod's configuration file for xPU is dynamically attached by Kubernetes using a config map as below.
+1. **CreateVolume** → CSI Controller
+2. Controller issues **NamespaceAdd** → NVMe-oF Gateway
+3. Gateway provisions an NVMe namespace and returns NQN, TRADDR, TRSVCID, transport.
+4. CSI Controller records these in `VolumeContext`.
+5. On `ControllerPublishVolume`, Controller may export additional attachment details.
 
-| File Name                                       | Usage                            |
-| ----------------------------------------------- | -------------------------------  |
-| deploy/kubernetes/nodeserver-config-map.yaml    | SPDK xPU cluster configurations  |
+---
 
-You can configure it using the parameters mentioned below.
-Multiple xPU nodes are supported, and each node's configuration includes the name, targetType, and targetAddr fields.
-The value of "targetType" can be one of "xpu-sma-nvmftcp", "xpu-sma-virtioblk", or "xpu-sma-nvme",
-and "targetAddr" is the URL used to connect to the SMA server on each cluster node.
+### 2. Node DaemonSet & Kubelet
 
-Here is an example of the deploy/kubernetes/nodeserver-config-map.yaml file:
 ```
-  nodeserver-config.json: |-
-    {
-      "xpuList": [
-        {
-          "name": "xPU0",
-          "targetType": "xpu-sma-nvme",
-          "targetAddr":"127.0.0.1:5114"
-        }
-      ]
-    }
++-----------------------------+        Unix Socket                        +-----------------------------+
+| kubelet (Pod volume plugin) | <--------------------------------------> | CSI Node Server (_out/nvmeofcsi) |
++-----------------------------+    /var/lib/kubelet/plugins/ \            +-----------------------------+
+                                            csi.nvmeof.io/     
+    ▲                    │
+    │ NodeGetInfo        │
+    │ NodeStageVolume    │
+    │  • run `nvme discover` + `nvme connect` using VolumeContext  
+    │ NodePublishVolume  │
+    │  • bind-mount device into Pod’s filesystem
+    │ NodeUnstageVolume  │
+    │ NodeUnpublishVolume│
+    │                    ▼
++------------------------------------------------------------------+
+|    NVMe-oF Target(s)                                             |
+|    • Subsystems, Namespaces exported over TCP transports         |
++------------------------------------------------------------------+
 ```
 
-### Prerequisites for xPU
+**Flow**:
 
-On a Fedora-based system, you will need grpcio-tools and protobuf installed.
+1. kubelet invokes **NodeStageVolume** → CSI Node
+2. Node runs `nvme discover`, `nvme connect` with
+   – **nqn** (subsystem name)
+   – **traddr** (target address)
+   – **trsvcid** (port)
+   – **transport**, etc.
+3. On success, device node (e.g. `/dev/nvmeXnY`) appears on host.
+4. **NodePublishVolume** → bind-mounts that block device into the Pod’s mount path.
+5. Tear-down via **NodeUnpublishVolume** / **NodeUnstageVolume**.
 
-### Workflow for xPU
-
-- The instance of SPDK Json RPC is running on both the xPU node and the storage pool server.
-
-- For SMA, the SMA gRPC server is running on xPU node. For OPI, the OPI-SPDK-Bridge gRPC server is running on xPU node.
-
-- The CSI controller driver is configured with the storage pool details. On the other hand, the CSI node driver is configured
- with the details of the SMA/OPI gRPC server.
-
-- When the CSI controller driver receives a new volume request from the Kubernetes volume plugin, it initiates a JSON RPC
- request to the SPDK storage node. This request triggers the creation and export of an NVMe volume on the SPDK storage node.
- The volume connection details are then stored in the CSI volume parameters for further reference.
-
-- Upon receiving a stage volume request along with the volume parameters, the CSI node driver comes into action. The CSI
- node plugin initiates the appropriate SMA/OPI gRPC calls to the server running on the xPU node.
-
-- Subsequently, the CSI node driver establishes a connection to the remote NVMe device using the volume parameters obtained
- earlier. With the connection established, the CSI node driver proceeds to create a local volume with the appropriate volume
- type. Furthermore, it attaches the volume to the remote NVMe device, effectively exposing it as a local device on the host
- for further usage.
-
-### Prepare SPDK xPU node
-
-Follow [deploy/spdk/README](deploy/spdk/README.md) to deploy SPDK SMA service on localhost.
-
-For the rest steps, you can follow the same steps in "Prepare SPDK storage node", "Deploy SPDKCSI services",
-and "Teardown" above to prepare the SPDK storage node, deploy SPDKCSI driver, and tear down everything.
+---
 
 ## Communication and Contribution
 
