@@ -139,23 +139,23 @@ func (ns *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageV
 		klog.Errorf("failed to delete mount point, targetPath: %s err: %v", stagingTargetPath, err)
 		return nil, status.Errorf(codes.Internal, "unstage volume %s failed: %s", volumeID, err)
 	}
-
-	volumeContext, err := util.LookupVolumeContext(stagingTargetPath)
-	if err != nil {
-		klog.Errorf("failed to lookup volume context, volumeID: %s err: %v", volumeID, err)
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	var initiator util.NvmeofCsiInitiator
-	initiator, err = util.NewNvmeofCsiInitiator(volumeContext)
-	if err != nil {
-		klog.Errorf("failed to create spdk initiator, volumeID: %s err: %v", volumeID, err)
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	err = initiator.Disconnect() // idempotent
-	if err != nil {
-		klog.Errorf("failed to disconnect initiator, volumeID: %s err: %v", volumeID, err)
-		return nil, status.Error(codes.Internal, err.Error())
-	}
+	//TODO - maybe we should disconnect the initiator here?
+	// volumeContext, err := util.LookupVolumeContext(stagingTargetPath)
+	// if err != nil {
+	// 	klog.Errorf("failed to lookup volume context, volumeID: %s err: %v", volumeID, err)
+	// 	return nil, status.Error(codes.Internal, err.Error())
+	// }
+	// var initiator util.NvmeofCsiInitiator
+	// initiator, err = util.NewNvmeofCsiInitiator(volumeContext)
+	// if err != nil {
+	// 	klog.Errorf("failed to create spdk initiator, volumeID: %s err: %v", volumeID, err)
+	// 	return nil, status.Error(codes.Internal, err.Error())
+	// }
+	// err = initiator.Disconnect() // idempotent
+	// if err != nil {
+	// 	klog.Errorf("failed to disconnect initiator, volumeID: %s err: %v", volumeID, err)
+	// 	return nil, status.Error(codes.Internal, err.Error())
+	// }
 	// if err := util.CleanUpVolumeContext(stagingTargetPath); err != nil {
 	// 	klog.Errorf("failed to clean up volume context, volumeID: %s err: %v", volumeID, err)
 	// 	return nil, status.Error(codes.Internal, err.Error())
