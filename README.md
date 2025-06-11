@@ -176,7 +176,7 @@ Below are two detailed ASCII diagrams showing:
 +------------------------------------------------------------------+
 ```
 
-**Flow**:
+**Flow Diagram **:
 
 1. kubelet invokes **NodeStageVolume** → CSI Node
 2. Node runs `nvme discover`, `nvme connect` with
@@ -189,6 +189,102 @@ Below are two detailed ASCII diagrams showing:
 5. Tear-down via **NodeUnpublishVolume** / **NodeUnstageVolume**.
 
 ---
+
+**Flow**:
+```
++-------------------------------+                
+|  Kubernetes Control Plane     |                
+|  (Provisioner, Scheduler)     |                
++---------------+---------------+                
+                | PVC created                       
+                v                                  
+     +----------------------------+                
+     |  CSI Controller Plugin     |   <- Deployment 
+     | (CreateVolume)             |                
+     +----------------------------+                
+                |                                  
+                | gRPC call: CreateVolume()        
+                v                                  
+     +-----------------------------+               
+     | NVMe-oF Gateway (gRPC)      |               
+     | • NamespaceAdd              |               
+     +-----------------------------+               
+                |                                  
+                v                                  
+     +-----------------------------+               
+     | Volume metadata returned     |              
+     | (NQN, NSID, size, etc.)      |              
+     +-----------------------------+               
+                |                                  
+                v                                  
+     +-----------------------------+               
+     | CSI Controller → Responds   |               
+     | to K8s with Volume object   |               
+     +-----------------------------+               
+                |                                  
+                v                                  
++--------------------------------------------+    
+| Kubernetes Scheduler assigns Pod to Node   |    
++--------------------------------------------+    
+                |                                  
+                v                                  
++-------------------------------+                  
+| kubelet (on assigned Node)    |                  
+| detects volume requirement    |                  
++---------------+---------------+                  
+                |                                  
+                v                                  
+     +---------------------------+                 
+     |  CSI Node Plugin          |  <- DaemonSet    
+     | (NodeStageVolume)         |                 
+     +---------------------------+                 
+                |                                  
+                | Runs: `nvme discover + connect`  
+                v                                  
+     +-----------------------------+               
+     |  NVMe-oF Target Service     |               
+     |  (Subsystems, Namespaces)   |               
+     +-----------------------------+               
+                |                                  
+                v                                  
+     +---------------------------+                 
+     | NodePublishVolume         |                 
+     | • Bind mount device       |                 
+     +---------------------------+                 
+                |                                  
+                v                                  
+     +---------------------------+                 
+     | Container sees /dev/nvmeX |                 
+     +---------------------------+                 
+
+==================== CLEANUP =====================
+
+User deletes Pod + PVC
+                |
+                v
++---------------------------+
+| CSI Node Plugin           |
+| NodeUnpublishVolume       |
+| NodeUnstageVolume         |
+| • Disconnect NVMe device  |
++---------------------------+
+                |
+                v
++---------------------------+
+| CSI Controller Plugin     |
+| DeleteVolume              |
+| • Calls NamespaceDelete   |
++---------------------------+
+                |
+                v
++---------------------------+
+| NVMe-oF Gateway           |
+| Removes NS from subsystem |
++---------------------------+
+```
+
+---
+
 
 ## Communication and Contribution
 
