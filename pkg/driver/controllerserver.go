@@ -18,9 +18,9 @@ package driver
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -44,14 +44,46 @@ type controllerServer struct {
 	volumeLocks   *util.VolumeLocks
 }
 
+// VolumeIdentifier represents the structured data encoded in VolumeID
+type VolumeIdentifier struct {
+	NSID       uint32 `json:"nsid"`
+	NQN        string `json:"nqn"`
+	VolumeName string `json:"volume_name"` // Original PVC name for consistent locking
+}
+
+// Helper function to encode VolumeIdentifier into VolumeID
+func encodeVolumeID(identifier VolumeIdentifier) (string, error) {
+	jsonData, err := json.Marshal(identifier)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal volume identifier: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(jsonData), nil
+}
+
+// Helper function to decode VolumeID into VolumeIdentifier
+func decodeVolumeID(volumeID string) (*VolumeIdentifier, error) {
+	jsonData, err := base64.StdEncoding.DecodeString(volumeID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode volume ID: %w", err)
+	}
+
+	var identifier VolumeIdentifier
+	err = json.Unmarshal(jsonData, &identifier)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal volume identifier: %w", err)
+	}
+
+	return &identifier, nil
+}
+
 func (cs *controllerServer) CreateVolume(_ context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
-	volumeID := req.GetName()
-	unlock := cs.volumeLocks.Lock(volumeID)
+	volumeName := req.GetName()
+	unlock := cs.volumeLocks.Lock(volumeName)
 	defer unlock()
 
 	csiVolume, err := cs.createVolume(req)
 	if err != nil {
-		klog.Errorf("failed to create volume, volumeID: %s err: %v", volumeID, err)
+		klog.Errorf("failed to create volume, volumeID: %s err: %v", volumeName, err)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
@@ -62,7 +94,7 @@ func (cs *controllerServer) CreateVolume(_ context.Context, req *csi.CreateVolum
 	for k, v := range req.GetParameters() {
 		csiVolume.VolumeContext[k] = v
 	}
-
+	klog.Infof("Volume created successfully: %s with VolumeID: %s", volumeName, csiVolume.VolumeId)
 	return &csi.CreateVolumeResponse{Volume: csiVolume}, nil
 }
 
@@ -72,7 +104,7 @@ func (cs *controllerServer) createVolume(req *csi.CreateVolumeRequest) (*csi.Vol
 		err  error
 	)
 	size := req.GetCapacityRange().GetRequiredBytes()
-	if size == 0 {
+	if size == 0 { // default size
 		klog.Warningln("invalid volume size, defaulting to 1GiB")
 		size = 1 * 200 * 1024 * 1024 // 200MB
 	}
@@ -101,9 +133,22 @@ func (cs *controllerServer) createVolume(req *csi.CreateVolumeRequest) (*csi.Vol
 		return nil, fmt.Errorf("gateway NamespaceAdd returned error: %s", resp.GetErrorMessage())
 	}
 
+	// Create structured volume identifier
+	volumeIdentifier := VolumeIdentifier{
+		NSID:       resp.GetNsid(),
+		NQN:        nsReq.SubsystemNqn,
+		VolumeName: req.GetName(), // Store original volume name for locking
+	}
+
+	// Encode to create VolumeID
+	volumeID, err := encodeVolumeID(volumeIdentifier)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode volume ID: %w", err)
+	}
+
 	// Construct and return CSI volume
 	vol := &csi.Volume{
-		VolumeId:      fmt.Sprintf("nsid-%d", resp.GetNsid()),
+		VolumeId:      volumeID, // contains NSID, NQN, and volume name
 		CapacityBytes: size,
 		VolumeContext: map[string]string{
 			"nqn":       nsReq.SubsystemNqn,
@@ -139,13 +184,10 @@ func (cs *controllerServer) ValidateVolumeCapabilities(_ context.Context, req *c
 }
 
 func (cs *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
-	// Example: Call Gateway list_namespaces, find the one matching the VolumeId
-	// and send the UUID to the target node (e.g. via Node info in req)
-
 	klog.Infof("Publishing volume %s to node %s", req.VolumeId, req.NodeId)
-
+	nqn := req.VolumeContext["nqn"]
 	nsListReq := &gatewaypb.ListNamespacesReq{ //TODO - maybe i can create by Nsid and not Nqn
-		Subsystem: req.VolumeContext["nqn"],
+		Subsystem: nqn,
 	}
 
 	nsListResp, err := cs.gatewayClient.ListNamespaces(ctx, nsListReq)
@@ -154,10 +196,11 @@ func (cs *controllerServer) ControllerPublishVolume(ctx context.Context, req *cs
 	}
 
 	var targetUUID string
+	imageName := req.VolumeContext["image"]
 	for _, ns := range nsListResp.GetNamespaces() {
 		// print the ns
 		klog.Infof("Found namespace: %s, UUID: %s, Image: %s", ns.GetNsSubsystemNqn(), ns.GetUuid(), ns.GetRbdImageName())
-		if ns.GetRbdImageName() == req.VolumeContext["image"] {
+		if ns.GetRbdImageName() == imageName {
 			targetUUID = ns.GetUuid()
 			break
 		}
@@ -169,65 +212,59 @@ func (cs *controllerServer) ControllerPublishVolume(ctx context.Context, req *cs
 	// You could now "notify" the node, or embed the UUID in context for NodePublishVolume
 	publishContext := map[string]string{
 		"uuid":      targetUUID,
-		"nqn":       req.VolumeContext["nqn"],
+		"nqn":       nqn,
 		"traddr":    req.VolumeContext["traddr"],
 		"trsvcid":   req.VolumeContext["trsvcid"],
 		"transport": req.VolumeContext["transport"],
 	}
 
+	klog.Infof("Volume published successfully: %s with UUID: %s", req.VolumeId, targetUUID)
 	return &csi.ControllerPublishVolumeResponse{
 		PublishContext: publishContext,
 	}, nil
 }
 
 func (cs *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
-	volumeID := req.GetVolumeId()
-	if volumeID == "" {
-		return nil, status.Error(codes.InvalidArgument, "volume ID is required")
-	}
-	// TODO: Add logic to ControllerUnpublishVolume the volume from your backend (e.g., via gRPC to Gateway)
+	klog.Infof("Unpublishing volume %s from node %s", req.VolumeId, req.NodeId)
 
-	// Log success
-	klog.Infof("ControllerUnpublishVolume: %s", volumeID)
-
+	// For NVMe-oF, unpublishing is typically handled at the node level
+	// Controller just acknowledges the request
 	return &csi.ControllerUnpublishVolumeResponse{}, nil
 }
 
 func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
-	volumeID := req.GetVolumeId()
-	unlock := cs.volumeLocks.Lock(volumeID)
-	defer unlock()
 
-	if volumeID == "" {
+	if req.GetVolumeId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume ID is required")
 	}
 
-	if !strings.HasPrefix(volumeID, "nsid-") {
-		return nil, status.Error(codes.InvalidArgument, "invalid volumeID format")
-	}
-	klog.Infof("Deleting volume: %s", volumeID)
-
-	nsidStr := strings.TrimPrefix(volumeID, "nsid-")
-	nsidUint, err := strconv.ParseUint(nsidStr, 10, 32)
+	identifier, err := decodeVolumeID(req.GetVolumeId())
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid NSID: %v", err)
+		return nil, status.Errorf(codes.InvalidArgument, "failed to decode volume ID: %v", err)
+
 	}
-	nsid := uint32(nsidUint)
+	unlock := cs.volumeLocks.Lock(identifier.VolumeName)
+	defer unlock()
+
+	klog.Infof("Deleting volume: %s (NSID: %d, NQN: %s)", identifier.VolumeName, identifier.NSID, identifier.NQN)
 
 	nsDelReq := &gatewaypb.NamespaceDeleteReq{
-		Nsid: nsid,
+		Nsid:         identifier.NSID,
+		SubsystemNqn: identifier.NQN,
 	}
 	gwCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	resp, err := cs.gatewayClient.NamespaceDelete(gwCtx, nsDelReq)
 	if err != nil {
+		klog.Errorf("gateway NamespaceDelete failed for volume %s: %v", identifier.VolumeName, err)
 		return nil, status.Errorf(codes.Internal, "gateway NamespaceRemove failed: %v", err)
 	}
 	if resp.GetStatus() != 0 {
+		klog.Errorf("gateway returned error for volume %s: %s", identifier.VolumeName, resp.GetErrorMessage())
 		return nil, status.Errorf(codes.Internal, "gateway returned error: %s", resp.GetErrorMessage())
 	}
 
-	klog.Infof("Volume deleted successfully: %s", volumeID)
+	klog.Infof("Volume deleted successfully: %s", identifier.VolumeName)
 	return &csi.DeleteVolumeResponse{}, nil
 }
 
