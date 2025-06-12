@@ -176,7 +176,7 @@ Below are two detailed ASCII diagrams showing:
 +------------------------------------------------------------------+
 ```
 
-**Flow Diagram **:
+**Flow**:
 
 1. kubelet invokes **NodeStageVolume** → CSI Node
 2. Node runs `nvme discover`, `nvme connect` with
@@ -190,7 +190,7 @@ Below are two detailed ASCII diagrams showing:
 
 ---
 
-**Flow**:
+**Flow Diagram**:
 ```
 +-------------------------------+                
 |  Kubernetes Control Plane     |                
