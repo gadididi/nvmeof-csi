@@ -98,6 +98,7 @@ func (cs *controllerServer) CreateVolume(_ context.Context, req *csi.CreateVolum
 	return &csi.CreateVolumeResponse{Volume: csiVolume}, nil
 }
 
+// createVolume handles the actual creation logic, including communication with the Gateway
 func (cs *controllerServer) createVolume(req *csi.CreateVolumeRequest) (*csi.Volume, error) {
 	var (
 		resp *gatewaypb.NsidStatus
